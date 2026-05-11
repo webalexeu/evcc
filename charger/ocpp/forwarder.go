@@ -48,6 +48,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/evcc-io/evcc/util"
+	"github.com/lorenzodonini/ocpp-go/ocpp"
+	"github.com/lorenzodonini/ocpp-go/ocpp1.6/core"
+	"github.com/lorenzodonini/ocpp-go/ocppj"
 	"github.com/lorenzodonini/ocpp-go/ws"
 )
 
@@ -85,14 +88,6 @@ func ForwarderRules() []ForwarderRule {
 // StartForwarder is a no-op in the sidecar model; hooks are installed when
 // the intercepting server is created and fire on every charger connection.
 func StartForwarder() {}
-
-// ── OCPP frame constants ──────────────────────────────────────────────────────
-
-const (
-	ocppMsgCall       = 2
-	ocppMsgCallResult = 3
-	ocppMsgCallError  = 4
-)
 
 // actionsRelayedToUpstream lists the OCPP actions for which upstream is the
 // authoritative Central System.  For these messages evcc's own OCPP handler is
@@ -260,7 +255,7 @@ func dialUpstreamSidecar(id string, rule ForwarderRule) {
 	flushed := 0
 	for _, frame := range buffered {
 		msgType, msgID, action, err := parseOCPPFrame(frame)
-		if err != nil || msgType != ocppMsgCall {
+		if err != nil || msgType != ocppj.CALL {
 			continue
 		}
 		if actionsRelayedToUpstream[action] {
@@ -301,15 +296,10 @@ func drainPendingWithErrors(id string, sc *sidecar) {
 
 	for _, frame := range buffered {
 		msgType, msgID, action, err := parseOCPPFrame(frame)
-		if err != nil || msgType != ocppMsgCall || !actionsRelayedToUpstream[action] {
+		if err != nil || msgType != ocppj.CALL || !actionsRelayedToUpstream[action] {
 			continue
 		}
-		errFrame, _ := json.Marshal([]interface{}{
-			ocppMsgCallError, msgID, "GenericError",
-			"Upstream OCPP server unavailable",
-			map[string]any{},
-		})
-		if writeErr := cs.Write(id, errFrame); writeErr != nil {
+		if writeErr := cs.Write(id, callError(msgID, ocppj.GenericError, "Upstream OCPP server unavailable")); writeErr != nil {
 			forwarderLog.WARN.Printf("forwarder: send error for pending call %s to %s: %v", msgID, id, writeErr)
 		}
 	}
@@ -318,12 +308,7 @@ func drainPendingWithErrors(id string, sc *sidecar) {
 	if sc != nil {
 		sc.pendingChargerCallsMu.Lock()
 		for msgID := range sc.pendingChargerCalls {
-			errFrame, _ := json.Marshal([]interface{}{
-				ocppMsgCallError, msgID, "GenericError",
-				"Upstream OCPP server disconnected",
-				map[string]any{},
-			})
-			if writeErr := cs.Write(sc.chargerID, errFrame); writeErr != nil {
+			if writeErr := cs.Write(sc.chargerID, callError(msgID, ocppj.GenericError, "Upstream OCPP server disconnected")); writeErr != nil {
 				forwarderLog.WARN.Printf("forwarder: send disconnect error for %s to %s: %v", msgID, sc.chargerID, writeErr)
 			}
 		}
@@ -383,7 +368,7 @@ func onChargerMessage(ch ws.Channel, data []byte) bool {
 	sidecarsMu.Unlock()
 
 	switch msgType {
-	case ocppMsgCall:
+	case ocppj.CALL:
 		relay := actionsRelayedToUpstream[action]
 
 		if sc != nil {
@@ -422,7 +407,7 @@ func onChargerMessage(ch ws.Channel, data []byte) bool {
 		// come from upstream once the sidecar connects and flushes the buffer.
 		return relay && hasPending
 
-	case ocppMsgCallResult, ocppMsgCallError:
+	case ocppj.CALL_RESULT, ocppj.CALL_ERROR:
 		// Forward only if this is the reply to an upstream-initiated Call.
 		if sc == nil {
 			return false
@@ -481,15 +466,11 @@ func (sc *sidecar) readFromUpstream(readOnly bool) {
 		}
 
 		switch msgType {
-		case ocppMsgCall:
+		case ocppj.CALL:
 			if readOnly {
 				forwarderLog.DEBUG.Printf("forwarder: blocking upstream call %s in read-only session %s", msgID, sc.chargerID)
-				errFrame, _ := json.Marshal([]interface{}{
-					ocppMsgCallError, msgID, "SecurityError",
-					"Charger control not allowed: forwarder is in read-only mode",
-					map[string]any{},
-				})
-				_ = sc.conn.Write(context.Background(), websocket.MessageText, errFrame)
+				_ = sc.conn.Write(context.Background(), websocket.MessageText,
+					callError(msgID, ocppj.SecurityError, "Charger control not allowed: forwarder is in read-only mode"))
 				continue
 			}
 
@@ -502,9 +483,11 @@ func (sc *sidecar) readFromUpstream(readOnly bool) {
 					sc.meterInterval = interval
 					sc.lastMeterFwdMu.Unlock()
 					forwarderLog.DEBUG.Printf("forwarder: upstream set MeterValueSampleInterval=%v for %s", interval, sc.chargerID)
-					accepted, _ := json.Marshal([]interface{}{
-						ocppMsgCallResult, msgID, map[string]any{"status": "Accepted"},
-					})
+					accepted, _ := (&ocppj.CallResult{
+						MessageTypeId: ocppj.CALL_RESULT,
+						UniqueId:      msgID,
+						Payload:       core.NewChangeConfigurationConfirmation(core.ConfigurationStatusAccepted),
+					}).MarshalJSON()
 					_ = sc.conn.Write(context.Background(), websocket.MessageText, accepted)
 					continue
 				}
@@ -521,7 +504,7 @@ func (sc *sidecar) readFromUpstream(readOnly bool) {
 				forwarderLog.ERROR.Printf("forwarder: inject upstream call into charger %s: %v", sc.chargerID, err)
 			}
 
-		case ocppMsgCallResult, ocppMsgCallError:
+		case ocppj.CALL_RESULT, ocppj.CALL_ERROR:
 			// Check whether this is upstream's authoritative response to a
 			// charger-initiated Call (e.g. StartTransaction, Authorize).
 			sc.pendingChargerCallsMu.Lock()
@@ -614,17 +597,14 @@ func extractMeterValueSampleInterval(msg []byte) (time.Duration, bool) {
 	if err := json.Unmarshal(msg, &frame); err != nil || len(frame) < 4 {
 		return 0, false
 	}
-	var payload struct {
-		Key   string `json:"key"`
-		Value string `json:"value"`
-	}
-	if err := json.Unmarshal(frame[3], &payload); err != nil {
+	var req core.ChangeConfigurationRequest
+	if err := json.Unmarshal(frame[3], &req); err != nil {
 		return 0, false
 	}
-	if payload.Key != "MeterValueSampleInterval" {
+	if req.Key != "MeterValueSampleInterval" {
 		return 0, false
 	}
-	secs, err := strconv.Atoi(payload.Value)
+	secs, err := strconv.Atoi(req.Value)
 	if err != nil || secs <= 0 {
 		return 0, false
 	}
@@ -633,7 +613,7 @@ func extractMeterValueSampleInterval(msg []byte) (time.Duration, bool) {
 
 // parseOCPPFrame extracts the message type, message-id and (for type-2 Calls)
 // the action name from a raw OCPP JSON frame.
-func parseOCPPFrame(msg []byte) (msgType int, msgID string, action string, err error) {
+func parseOCPPFrame(msg []byte) (msgType ocppj.MessageType, msgID string, action string, err error) {
 	var frame []json.RawMessage
 	if err = json.Unmarshal(msg, &frame); err != nil || len(frame) < 2 {
 		return 0, "", "", fmt.Errorf("invalid OCPP frame")
@@ -644,8 +624,19 @@ func parseOCPPFrame(msg []byte) (msgType int, msgID string, action string, err e
 	if err = json.Unmarshal(frame[1], &msgID); err != nil {
 		return 0, "", "", fmt.Errorf("invalid message id: %w", err)
 	}
-	if msgType == ocppMsgCall && len(frame) >= 3 {
+	if msgType == ocppj.CALL && len(frame) >= 3 {
 		_ = json.Unmarshal(frame[2], &action) // best-effort; empty string if missing
 	}
 	return msgType, msgID, action, nil
+}
+
+// callError marshals a CallError frame using ocppj's typed builder.
+func callError(msgID string, code ocpp.ErrorCode, description string) []byte {
+	frame, _ := (&ocppj.CallError{
+		MessageTypeId:    ocppj.CALL_ERROR,
+		UniqueId:         msgID,
+		ErrorCode:        code,
+		ErrorDescription: description,
+	}).MarshalJSON()
+	return frame
 }
