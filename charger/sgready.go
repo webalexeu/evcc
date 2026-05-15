@@ -32,9 +32,11 @@ import (
 type SgReady struct {
 	*embed
 	implement.Caps
-	mode  int64
-	modeS func(int64) error
-	modeG func() (int64, error)
+	log         *util.Logger
+	mode        int64
+	externalDim bool // set by §14a via Dim(); kept separate so PV-mode dim doesn't confuse the §14a check
+	modeS       func(int64) error
+	modeG       func() (int64, error)
 
 	// optional power setter for devices that support SGReady with power envelope
 	power     int64
@@ -129,6 +131,7 @@ func NewSgReady(ctx context.Context, embed *embed, modeS func(int64) error, mode
 	res := &SgReady{
 		embed:     embed,
 		Caps:      implement.New(),
+		log:       util.ContextLoggerWithDefault(ctx, util.NewLogger("sgready")),
 		mode:      Normal,
 		modeS:     modeS,
 		modeG:     modeG,
@@ -152,6 +155,27 @@ func (wb *SgReady) Status() (api.ChargeStatus, error) {
 		return api.StatusNone, err
 	}
 
+	// Enable() only fires on enabled/disabled transitions, so it is never called
+	// when the charger starts already disabled or the mode changes while it stays
+	// disabled. Enforce Dim here (runs every tick) to cover those cases.
+	if mode == Normal && !wb.externalDim {
+		if wb.lp == nil {
+			wb.log.DEBUG.Printf("status: lp not yet wired, skipping dim enforcement")
+		} else {
+			lpMode := wb.lp.GetMode()
+			wb.log.DEBUG.Printf("status: mode=normal externalDim=false lpMode=%s", lpMode)
+			switch lpMode {
+			case api.ModePV, api.ModeOff:
+				if err := wb.modeS(Dim); err != nil {
+					wb.log.WARN.Printf("status: set dim failed: %v", err)
+				} else {
+					wb.mode = Dim
+					mode = Dim
+				}
+			}
+		}
+	}
+
 	status := map[int64]api.ChargeStatus{
 		Dim:    api.StatusB,
 		Normal: api.StatusB,
@@ -170,6 +194,20 @@ func (wb *SgReady) Enabled() (bool, error) {
 func (wb *SgReady) Enable(enable bool) error {
 	mode := map[bool]int64{false: Normal, true: Boost}[enable]
 
+	// In PV or off mode, dim instead of stopping so the heat pump runs in economy (SG1) rather than fully off.
+	if !enable && wb.lp != nil {
+		switch wb.lp.GetMode() {
+		case api.ModePV, api.ModeOff:
+			mode = Dim
+		}
+	}
+	wb.log.DEBUG.Printf("enable(%v): setting mode=%d (lpMode=%v)", enable, mode, func() api.ChargeMode {
+		if wb.lp != nil {
+			return wb.lp.GetMode()
+		}
+		return ""
+	}())
+
 	if err := wb.modeS(mode); err != nil {
 		return err
 	}
@@ -181,14 +219,17 @@ func (wb *SgReady) Enable(enable bool) error {
 
 var _ api.Dimmer = (*SgReady)(nil)
 
-// Dimmed implements the api.Dimmer interface
+// Dimmed implements the api.Dimmer interface.
+// Reports only §14a external dim state so the loadpoint's §14a check does not
+// interfere with PV-mode dimming applied in Enable().
 func (wb *SgReady) Dimmed() (bool, error) {
-	mode, err := wb.getMode()
-	return mode == Dim, err
+	return wb.externalDim, nil
 }
 
-// Dimm implements the api.Dimmer interface
+// Dim implements the api.Dimmer interface (§14a external grid limitation).
 func (wb *SgReady) Dim(dim bool) error {
+	wb.externalDim = dim
+
 	mode := Normal
 	if dim {
 		mode = Dim
@@ -198,7 +239,7 @@ func (wb *SgReady) Dim(dim bool) error {
 		return err
 	}
 
-	wb.mode = Dim
+	wb.mode = mode
 
 	return nil
 }
