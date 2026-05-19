@@ -215,6 +215,7 @@ func (m *MQTT) listenSiteSetters(topic string, site site.API) error {
 		{"bufferSoc", floatSetter(site.SetBufferSoc)},
 		{"bufferStartSoc", floatSetter(site.SetBufferStartSoc)},
 		{"batteryDischargeControl", boolSetter(site.SetBatteryDischargeControl)},
+		{"batterySolarControl", boolSetter(site.SetBatterySolarControl)},
 		{"prioritySoc", floatSetter(site.SetPrioritySoc)},
 		{"residualPower", floatSetter(site.SetResidualPower)},
 		{"smartCostLimit", floatPtrSetter(pass(func(limit *float64) {

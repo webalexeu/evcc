@@ -52,8 +52,8 @@ func (site *Site) SetBatteryMode(batMode api.BatteryMode) {
 	}
 }
 
-func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate) {
-	batteryMode := site.requiredBatteryMode(batteryGridChargeActive, rate)
+func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate, sitePower, totalChargePower float64) {
+	batteryMode := site.requiredBatteryMode(batteryGridChargeActive, rate, sitePower)
 
 	// put battery into hold mode when charging is active and circuit dimmed
 	fromToCharge := batteryMode == api.BatteryCharge || batteryMode == api.BatteryUnknown && site.batteryMode == api.BatteryCharge
@@ -72,10 +72,144 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate)
 			site.log.ERROR.Println("battery mode:", err)
 		}
 	}
+
+	// when solar control is active, drive power-level setters on capable battery meters
+	if site.batterySolarControl {
+		site.applyBatterySolarPower(sitePower, totalChargePower)
+	}
 }
 
-// requiredBatteryMode determines required battery mode based on grid charge and rate
-func (site *Site) requiredBatteryMode(batteryGridChargeActive bool, rate api.Rate) api.BatteryMode {
+// applyBatterySolarPower calls SetBatteryChargePower / SetBatteryDischargePower on each battery
+// meter that implements BatteryPowerController, proportional to the solar surplus or deficit.
+func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
+	// When battery has priority (soc below threshold), derive the true solar surplus
+	// independent of what chargers and the battery are currently drawing:
+	//   surplus = pvPower - houseLoad = -(gridPower - chargerLoad + batteryDischarge)
+	// sitePower (= gridPower) already has battery discharge zeroed by site.sitePower()
+	// when SOC < prioritySoc, so we subtract charger load and add back the discharge
+	// that was zeroed, giving the real solar surplus without grid or battery contribution.
+	if site.battery.Soc < site.prioritySoc {
+		batteryDischargePower := max(0, -site.battery.Power) // positive when discharging
+		sitePower -= totalChargePower - batteryDischargePower
+	}
+	surplus := -sitePower // positive = exporting (solar surplus)
+
+	type entry struct {
+		ctrl api.BatteryPowerController
+		dev  config.Device[api.Meter]
+	}
+
+	// collect all capable controllers
+	var all []entry
+	for _, dev := range site.batteryMeters {
+		if ctrl, ok := api.Cap[api.BatteryPowerController](dev.Instance()); ok {
+			all = append(all, entry{ctrl, dev})
+		}
+	}
+	if len(all) == 0 {
+		return
+	}
+
+	stopAll := func(entries []entry) {
+		for _, e := range entries {
+			if err := e.ctrl.SetBatteryChargePower(0); err != nil {
+				site.log.ERROR.Printf("battery charge power: %v", err)
+			}
+			if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
+				site.log.ERROR.Printf("battery discharge power: %v", err)
+			}
+		}
+	}
+
+	// read per-device SoC; returns 0 and ok=false when not available
+	deviceSoc := func(dev config.Device[api.Meter]) (float64, bool) {
+		bat, ok := api.Cap[api.Battery](dev.Instance())
+		if !ok {
+			return 0, false
+		}
+		soc, err := bat.Soc()
+		return soc, err == nil
+	}
+
+	switch {
+	case surplus > standbyPower:
+		// filter to batteries that have not yet reached their max SoC
+		var active, full []entry
+		for _, e := range all {
+			soc, ok := deviceSoc(e.dev)
+			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok && hasLimiter {
+				if _, maxSoc := limiter.GetSocLimits(); maxSoc > 0 && soc >= maxSoc {
+					full = append(full, e)
+					continue
+				}
+			}
+			active = append(active, e)
+		}
+		stopAll(full)
+		if len(active) == 0 {
+			stopAll(all)
+			break
+		}
+		share := surplus / float64(len(active))
+		for _, e := range active {
+			chargePower := share
+			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+				if maxCharge, _ := limiter.GetPowerLimits(); maxCharge > 0 && chargePower > maxCharge {
+					chargePower = maxCharge
+				}
+			}
+			if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
+				site.log.ERROR.Printf("battery discharge power: %v", err)
+			}
+			if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
+				site.log.ERROR.Printf("battery charge power: %v", err)
+			}
+		}
+		site.log.DEBUG.Printf("solar power: charge %.0fW surplus across %d/%d batteries", surplus, len(active), len(all))
+
+	case sitePower > standbyPower:
+		// filter to batteries that have not yet reached their min SoC
+		var active, empty []entry
+		for _, e := range all {
+			soc, ok := deviceSoc(e.dev)
+			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok && hasLimiter {
+				if minSoc, _ := limiter.GetSocLimits(); soc <= minSoc {
+					empty = append(empty, e)
+					continue
+				}
+			}
+			active = append(active, e)
+		}
+		stopAll(empty)
+		if len(active) == 0 {
+			stopAll(all)
+			break
+		}
+		share := sitePower / float64(len(active))
+		for _, e := range active {
+			dischargePower := share
+			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+				if _, maxDischarge := limiter.GetPowerLimits(); maxDischarge > 0 && dischargePower > maxDischarge {
+					dischargePower = maxDischarge
+				}
+			}
+			if err := e.ctrl.SetBatteryChargePower(0); err != nil {
+				site.log.ERROR.Printf("battery charge power: %v", err)
+			}
+			if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
+				site.log.ERROR.Printf("battery discharge power: %v", err)
+			}
+		}
+		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", sitePower, len(active), len(all))
+
+	default:
+		stopAll(all)
+		site.log.DEBUG.Printf("solar power: balanced, stop")
+	}
+}
+
+// requiredBatteryMode determines required battery mode based on grid charge, rate, and site power
+func (site *Site) requiredBatteryMode(batteryGridChargeActive bool, rate api.Rate, sitePower float64) api.BatteryMode {
 	var res api.BatteryMode
 	batMode := site.GetBatteryMode()
 	extMode := site.GetBatteryModeExternal()
@@ -105,6 +239,10 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive bool, rate api.Rat
 	case batteryGridChargeActive:
 		res = keepUnlessModified(api.BatteryCharge)
 	case site.dischargeControlActive(rate):
+		res = keepUnlessModified(api.BatteryHold)
+	case site.batterySolarControl:
+		// Battery control: keep RS485 enabled (Hold) so applyBatterySolarPower owns every tick.
+		// Normal mode would disable RS485 between ticks and hand control back to the inverter.
 		res = keepUnlessModified(api.BatteryHold)
 	case batteryModeModified(batMode):
 		res = api.BatteryNormal

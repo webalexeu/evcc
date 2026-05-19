@@ -321,6 +321,33 @@ func (site *Site) GetBatteryDischargeControl() bool {
 	return site.batteryDischargeControl
 }
 
+// GetBatterySolarControl returns whether evcc actively manages battery charge/discharge from solar
+func (site *Site) GetBatterySolarControl() bool {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batterySolarControl
+}
+
+// SetBatterySolarControl enables/disables automatic battery mode management based on solar surplus
+func (site *Site) SetBatterySolarControl(val bool) error {
+	site.log.DEBUG.Println("set battery solar control:", val)
+
+	if !site.hasBatteryControl() {
+		return ErrBatteryControlNotAvailable
+	}
+
+	site.Lock()
+	defer site.Unlock()
+
+	if site.batterySolarControl != val {
+		site.batterySolarControl = val
+		settings.SetBool(keys.BatterySolarControl, val)
+		site.publish(keys.BatterySolarControl, val)
+	}
+
+	return nil
+}
+
 // SetBatteryDischargeControl sets the battery control mode (no discharge only)
 func (site *Site) SetBatteryDischargeControl(val bool) error {
 	site.log.DEBUG.Println("set battery discharge control:", val)
