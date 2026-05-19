@@ -8,6 +8,25 @@
 						{{ $t("batterySettings.usageTab") }}
 					</h3>
 					<BatteryUsageSettings style="max-width: 950px" v-bind="batteryUsageProps" />
+				<template v-if="solarControlPossible">
+						<hr class="my-5" />
+						<h3 class="fw-normal my-4 mt-5">
+							{{ $t("batterySettings.batteryControlTab") }}
+						</h3>
+						<div class="form-check form-switch">
+							<input
+								id="batterySolarControl"
+								:checked="state.batterySolarControl"
+								class="form-check-input"
+								type="checkbox"
+								role="switch"
+								@change="changeSolarControl"
+							/>
+							<label class="form-check-label" for="batterySolarControl">
+								{{ $t("batterySettings.batteryControl") }}
+							</label>
+						</div>
+					</template>
 					<template v-if="gridChargeVisible">
 						<hr class="my-5" />
 						<h3 class="fw-normal my-4 mt-5">
@@ -32,6 +51,7 @@ import SmartCostLimit from "../components/Tariff/SmartCostLimit.vue";
 import store from "../store";
 import settings from "../settings";
 import collector from "../mixins/collector";
+import api from "../api";
 import { SMART_COST_TYPE } from "../types/evcc";
 
 export default defineComponent({
@@ -55,6 +75,10 @@ export default defineComponent({
 		batteryUsageProps() {
 			return this.collectProps(BatteryUsageSettings, this.state);
 		},
+		solarControlPossible() {
+			const devices = this.state.battery?.devices ?? [];
+			return devices.some(({ controllable }) => controllable);
+		},
 		gridChargePossible() {
 			const devices = this.state.battery?.devices ?? [];
 			return (
@@ -77,6 +101,17 @@ export default defineComponent({
 				tariff: this.gridChargeTariff,
 				possible: this.gridChargePossible,
 			};
+		},
+	},
+	methods: {
+		async changeSolarControl(e: Event) {
+			try {
+				await api.post(
+					`batterysolarcontrol/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
 		},
 	},
 });
