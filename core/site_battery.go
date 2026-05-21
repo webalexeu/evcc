@@ -158,9 +158,6 @@ func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
 					chargePower = maxCharge
 				}
 			}
-			if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
-				site.log.ERROR.Printf("battery discharge power: %v", err)
-			}
 			if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
 				site.log.ERROR.Printf("battery charge power: %v", err)
 			}
@@ -192,9 +189,6 @@ func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
 				if _, maxDischarge := limiter.GetPowerLimits(); maxDischarge > 0 && dischargePower > maxDischarge {
 					dischargePower = maxDischarge
 				}
-			}
-			if err := e.ctrl.SetBatteryChargePower(0); err != nil {
-				site.log.ERROR.Printf("battery charge power: %v", err)
 			}
 			if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
 				site.log.ERROR.Printf("battery discharge power: %v", err)
