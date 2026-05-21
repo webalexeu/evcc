@@ -29,6 +29,8 @@
     "capacity": "{energy} of {total}",
     "control": "Battery control",
     "discharge": "Prevent discharge in fast mode and planned charging.",
+    "batteryControl": "Actively control charge and discharge power based on solar production and home consumption.",
+    "batteryControlTab": "Battery control",
     "disclaimerHint": "Note:",
     "disclaimerText": "These settings only affect solar mode. Charging behaviour is adjusted accordingly.",
     "gridChargeTab": "Grid charging",
