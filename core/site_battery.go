@@ -161,7 +161,17 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		}
 		site.log.DEBUG.Printf("solar power: charge %.0fW surplus across %d/%d batteries", surplus, len(active), len(all))
 
-	case sitePower > standbyPower && !site.dischargeControlActive(rate):
+	case sitePower > standbyPower:
+		// when discharge control active, only cover home loads (exclude EV charger load)
+		dischargeTarget := sitePower
+		if site.dischargeControlActive(rate) {
+			dischargeTarget = sitePower - totalChargePower
+		}
+		if dischargeTarget <= standbyPower {
+			stopAll(all)
+			site.log.DEBUG.Printf("solar power: discharge prevented (EV deficit only), stop")
+			break
+		}
 		// filter to batteries that have not yet reached their min SoC
 		var active, empty []entry
 		for _, e := range all {
@@ -179,7 +189,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			stopAll(all)
 			break
 		}
-		share := sitePower / float64(len(active))
+		share := dischargeTarget / float64(len(active))
 		for _, e := range active {
 			dischargePower := share
 			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
@@ -191,7 +201,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 				site.log.ERROR.Printf("battery discharge power: %v", err)
 			}
 		}
-		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", sitePower, len(active), len(all))
+		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", dischargeTarget, len(active), len(all))
 
 	default:
 		stopAll(all)
