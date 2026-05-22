@@ -337,9 +337,9 @@ func (site *Site) dischargeControlActive(rate api.Rate) bool {
 	}
 
 	for _, lp := range site.Loadpoints() {
-		// fast/plan charging: prevent discharge whenever mode is active, regardless of
-		// momentary EV status (StatusB during phase negotiation, ramp-up, etc.)
-		if lp.IsFastChargingActive() {
+		// fast/plan charging: car must be connected (StatusB+) but StatusC not required
+		// so phase negotiation / ramp-up transitions don't momentarily re-enable discharge
+		if lp.GetStatus() != api.StatusA && lp.IsFastChargingActive() {
 			return true
 		}
 		// smart cost: only prevent discharge when current is actually flowing
