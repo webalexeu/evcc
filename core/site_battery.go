@@ -82,20 +82,14 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate,
 // applyBatterySolarPower calls SetBatteryChargePower / SetBatteryDischargePower on each battery
 // meter that implements BatteryPowerController, proportional to the solar surplus or deficit.
 func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePower float64) {
-	// When battery has priority (soc below threshold), derive the true solar surplus
-	// independent of what chargers and the battery are currently drawing:
-	//   surplus = pvPower - houseLoad = -(gridPower - chargerLoad + batteryDischarge)
-	// sitePower (= gridPower) already has battery discharge zeroed by site.sitePower()
-	// when SOC < prioritySoc, so we subtract charger load and add back the discharge
-	// that was zeroed, giving the real solar surplus without grid or battery contribution.
-	// This adjustment is only applied to the charge signal (surplus): for discharge we use
-	// raw sitePower so that EV loads in Fast/Min mode remain visible to the battery controller.
-	sitePowerCharge := sitePower
+	// When battery has priority (soc below threshold), use the raw grid reading as the
+	// surplus signal so the battery charges from actual solar export regardless of the
+	// sitePower adjustment that throttles loadpoints. In normal mode sitePower is used
+	// directly (negative = exporting = surplus available for battery).
+	surplus := -sitePower // positive = exporting (solar surplus)
 	if site.battery.Soc < site.prioritySoc {
-		batteryDischargePower := max(0, -site.battery.Power) // positive when discharging
-		sitePowerCharge -= totalChargePower - batteryDischargePower
+		surplus = -site.gridPower
 	}
-	surplus := -sitePowerCharge // positive = exporting (solar surplus)
 
 	type entry struct {
 		ctrl api.BatteryPowerController

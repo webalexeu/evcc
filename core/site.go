@@ -888,6 +888,11 @@ func (site *Site) sitePower(totalChargePower, flexiblePower float64) (float64, b
 			site.log.DEBUG.Printf("battery has priority at soc %.0f%% (< %.0f%%)", site.battery.Soc, site.prioritySoc)
 			batteryPower = 0
 			excessDCPower = 0
+		} else if site.battery.Soc < site.prioritySoc && site.batterySolarControl && site.gridPower < 0 && batteryPower < standbyPower {
+			// solar control: battery in Hold mode (not yet responding to charge command)
+			// absorb surplus into residualPower so loadpoints see no available surplus
+			site.log.DEBUG.Printf("battery solar priority at soc %.0f%% (< %.0f%%): claiming %.0fW surplus", site.battery.Soc, site.prioritySoc, -site.gridPower)
+			residualPower = max(residualPower, -site.gridPower)
 		} else {
 			// if battery is above bufferSoc allow using it for charging
 			batteryBuffered = site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
