@@ -162,9 +162,11 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		site.log.DEBUG.Printf("solar power: charge %.0fW surplus across %d/%d batteries", surplus, len(active), len(all))
 
 	case sitePower > standbyPower:
-		// when discharge control active, only cover home loads (exclude EV charger load)
+		// exclude EV charger load from discharge target when battery-supported is not active
+		// (bufferSoc not configured or SoC below threshold) or discharge control is active
+		batteryBuffered := site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
 		dischargeTarget := sitePower
-		if site.dischargeControlActive(rate) {
+		if !batteryBuffered || site.dischargeControlActive(rate) {
 			dischargeTarget = sitePower - totalChargePower
 		}
 		if dischargeTarget <= standbyPower {
