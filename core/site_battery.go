@@ -88,11 +88,14 @@ func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
 	// sitePower (= gridPower) already has battery discharge zeroed by site.sitePower()
 	// when SOC < prioritySoc, so we subtract charger load and add back the discharge
 	// that was zeroed, giving the real solar surplus without grid or battery contribution.
+	// This adjustment is only applied to the charge signal (surplus): for discharge we use
+	// raw sitePower so that EV loads in Fast/Min mode remain visible to the battery controller.
+	sitePowerCharge := sitePower
 	if site.battery.Soc < site.prioritySoc {
 		batteryDischargePower := max(0, -site.battery.Power) // positive when discharging
-		sitePower -= totalChargePower - batteryDischargePower
+		sitePowerCharge -= totalChargePower - batteryDischargePower
 	}
-	surplus := -sitePower // positive = exporting (solar surplus)
+	surplus := -sitePowerCharge // positive = exporting (solar surplus)
 
 	type entry struct {
 		ctrl api.BatteryPowerController
