@@ -75,13 +75,13 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate,
 
 	// when solar control is active, drive power-level setters on capable battery meters
 	if site.batterySolarControl {
-		site.applyBatterySolarPower(sitePower, totalChargePower)
+		site.applyBatterySolarPower(rate, sitePower, totalChargePower)
 	}
 }
 
 // applyBatterySolarPower calls SetBatteryChargePower / SetBatteryDischargePower on each battery
 // meter that implements BatteryPowerController, proportional to the solar surplus or deficit.
-func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
+func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePower float64) {
 	// When battery has priority (soc below threshold), derive the true solar surplus
 	// independent of what chargers and the battery are currently drawing:
 	//   surplus = pvPower - houseLoad = -(gridPower - chargerLoad + batteryDischarge)
@@ -167,7 +167,7 @@ func (site *Site) applyBatterySolarPower(sitePower, totalChargePower float64) {
 		}
 		site.log.DEBUG.Printf("solar power: charge %.0fW surplus across %d/%d batteries", surplus, len(active), len(all))
 
-	case sitePower > standbyPower:
+	case sitePower > standbyPower && !site.dischargeControlActive(rate):
 		// filter to batteries that have not yet reached their min SoC
 		var active, empty []entry
 		for _, e := range all {
