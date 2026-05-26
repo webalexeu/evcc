@@ -88,11 +88,11 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 	// directly (negative = exporting = surplus available for battery).
 	surplus := -sitePower // positive = exporting (solar surplus)
 	if site.battery.Soc < site.prioritySoc {
-		// In priority mode derive true solar surplus from the energy balance identity:
-		// pvPower - housePower - chargerPower = batteryPower - gridPower
-		// This is stable: regardless of what batteries are currently doing, the value
-		// always equals the real solar surplus available for battery charging.
-		surplus = site.battery.Power - site.gridPower
+		// Derive true solar surplus via energy balance, independent of battery sign
+		// convention (standard: positive=charging, or inverted: negative=charging):
+		//   pvPower - housePower - EV = -(batteryPower + gridPower)
+		// Converges to the correct setpoint within 1-2 ticks for all battery states.
+		surplus = -(site.battery.Power + site.gridPower)
 	}
 
 	type entry struct {

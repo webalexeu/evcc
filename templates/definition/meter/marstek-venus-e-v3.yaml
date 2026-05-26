@@ -40,7 +40,7 @@ render: |
       address: 30006 # AC Power (W)
       type: holding
       decode: int16
-    scale: -1
+    scale: 1
   energy:
     source: modbus
     {{- include "modbus" . | indent 2 }}
