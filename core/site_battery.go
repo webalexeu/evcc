@@ -88,7 +88,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 	// directly (negative = exporting = surplus available for battery).
 	surplus := -sitePower // positive = exporting (solar surplus)
 	if site.battery.Soc < site.prioritySoc {
-		surplus = -site.gridPower
+		// gridPower already reflects battery discharge, so subtract it to get true solar surplus:
+		// true_surplus = pvPower - housePower - EV = batteryPower - gridPower (from energy balance)
+		// Using -gridPower alone overshoots by the amount batteries were discharging.
+		surplus = site.battery.Power - site.gridPower
 	}
 
 	type entry struct {
