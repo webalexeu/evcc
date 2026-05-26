@@ -88,9 +88,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 	// directly (negative = exporting = surplus available for battery).
 	surplus := -sitePower // positive = exporting (solar surplus)
 	if site.battery.Soc < site.prioritySoc {
-		// gridPower already reflects battery discharge, so subtract it to get true solar surplus:
-		// true_surplus = pvPower - housePower - EV = batteryPower - gridPower (from energy balance)
-		// Using -gridPower alone overshoots by the amount batteries were discharging.
+		// In priority mode derive true solar surplus from the energy balance identity:
+		// pvPower - housePower - chargerPower = batteryPower - gridPower
+		// This is stable: regardless of what batteries are currently doing, the value
+		// always equals the real solar surplus available for battery charging.
 		surplus = site.battery.Power - site.gridPower
 	}
 
@@ -231,19 +232,14 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		}
 		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", dischargeTarget, len(active), len(all))
 
-	case inPriorityMode && site.gridPower > standbyPower:
-		// grid is importing while battery has priority — stop to avoid oscillation
+	case inPriorityMode && surplus <= standbyPower:
+		// no solar surplus in priority mode — stop to prevent unwanted discharge
 		stopAll(all)
-		site.log.DEBUG.Printf("solar power: priority mode, grid import %.0fW, stop", site.gridPower)
+		site.log.DEBUG.Printf("solar power: priority mode, surplus %.0fW insufficient, stop", surplus)
 
 	default:
-		if inPriorityMode {
-			// grid is within deadband — hold last command, no oscillation
-			site.log.DEBUG.Printf("solar power: priority mode, balanced (grid %.0fW), hold", site.gridPower)
-		} else {
-			stopAll(all)
-			site.log.DEBUG.Printf("solar power: balanced, stop")
-		}
+		stopAll(all)
+		site.log.DEBUG.Printf("solar power: balanced, stop")
 	}
 }
 
