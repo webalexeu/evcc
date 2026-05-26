@@ -128,6 +128,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		return soc, err == nil
 	}
 
+	inPriorityMode := site.battery.Soc < site.prioritySoc
+
 	switch {
 	case surplus > standbyPower:
 		// filter to batteries that have not yet reached their max SoC
@@ -148,6 +150,27 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			break
 		}
 		share := surplus / float64(len(active))
+		// when share is below the minimum effective power, concentrate on the lowest-SoC battery
+		// to avoid sending commands too small for the inverter to act on (e.g. Marstek ignores <50W)
+		const minEffectiveShare = 50.0
+		if share < minEffectiveShare && len(active) > 1 {
+			bestIdx, bestSoc := 0, 101.0
+			for i, e := range active {
+				if soc, ok := deviceSoc(e.dev); ok && soc < bestSoc {
+					bestSoc, bestIdx = soc, i
+				}
+			}
+			var others []entry
+			for i, e := range active {
+				if i != bestIdx {
+					others = append(others, e)
+				}
+			}
+			stopAll(others)
+			active = active[bestIdx : bestIdx+1]
+			share = surplus
+			site.log.DEBUG.Printf("solar power: share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
+		}
 		for _, e := range active {
 			chargePower := share
 			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
@@ -159,9 +182,9 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 				site.log.ERROR.Printf("battery charge power: %v", err)
 			}
 		}
-		site.log.DEBUG.Printf("solar power: charge %.0fW surplus across %d/%d batteries", surplus, len(active), len(all))
+		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 
-	case sitePower > standbyPower:
+	case !inPriorityMode && sitePower > standbyPower:
 		// exclude EV charger load from discharge target when battery-supported is not active
 		// (bufferSoc not configured or SoC below threshold) or discharge control is active
 		batteryBuffered := site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
@@ -205,9 +228,19 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		}
 		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", dischargeTarget, len(active), len(all))
 
-	default:
+	case inPriorityMode && site.gridPower > standbyPower:
+		// grid is importing while battery has priority — stop to avoid oscillation
 		stopAll(all)
-		site.log.DEBUG.Printf("solar power: balanced, stop")
+		site.log.DEBUG.Printf("solar power: priority mode, grid import %.0fW, stop", site.gridPower)
+
+	default:
+		if inPriorityMode {
+			// grid is within deadband — hold last command, no oscillation
+			site.log.DEBUG.Printf("solar power: priority mode, balanced (grid %.0fW), hold", site.gridPower)
+		} else {
+			stopAll(all)
+			site.log.DEBUG.Printf("solar power: balanced, stop")
+		}
 	}
 }
 
