@@ -26,6 +26,19 @@
 								{{ $t("batterySettings.batteryControl") }}
 							</label>
 						</div>
+						<div v-if="state.batterySolarControl" class="form-check form-switch mt-2">
+							<input
+								id="batterySolarOptimizer"
+								:checked="state.batterySolarOptimizer"
+								class="form-check-input"
+								type="checkbox"
+								role="switch"
+								@change="changeSolarOptimizer"
+							/>
+							<label class="form-check-label" for="batterySolarOptimizer">
+								{{ $t("batterySettings.batteryOptimizer") }}
+							</label>
+						</div>
 					</template>
 					<template v-if="gridChargeVisible">
 						<hr class="my-5" />
@@ -108,6 +121,15 @@ export default defineComponent({
 			try {
 				await api.post(
 					`batterysolarcontrol/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeSolarOptimizer(e: Event) {
+			try {
+				await api.post(
+					`batterysolaroptimizer/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
 				);
 			} catch (err) {
 				console.error(err);
