@@ -79,6 +79,9 @@ type API interface {
 	GetBatterySolarControl() bool
 	SetBatterySolarControl(bool) error
 
+	GetBatterySolarOptimizer() bool
+	SetBatterySolarOptimizer(bool) error
+
 	//
 	// battery control external
 	//

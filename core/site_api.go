@@ -348,6 +348,33 @@ func (site *Site) SetBatterySolarControl(val bool) error {
 	return nil
 }
 
+// GetBatterySolarOptimizer returns whether optimizer charge targets are used in solar control mode
+func (site *Site) GetBatterySolarOptimizer() bool {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batterySolarOptimizer
+}
+
+// SetBatterySolarOptimizer enables/disables optimizer-driven charge targets in solar control mode
+func (site *Site) SetBatterySolarOptimizer(val bool) error {
+	site.log.DEBUG.Println("set battery solar optimizer:", val)
+
+	if !site.hasBatteryControl() {
+		return ErrBatteryControlNotAvailable
+	}
+
+	site.Lock()
+	defer site.Unlock()
+
+	if site.batterySolarOptimizer != val {
+		site.batterySolarOptimizer = val
+		settings.SetBool(keys.BatterySolarOptimizer, val)
+		site.publish(keys.BatterySolarOptimizer, val)
+	}
+
+	return nil
+}
+
 // SetBatteryDischargeControl sets the battery control mode (no discharge only)
 func (site *Site) SetBatteryDischargeControl(val bool) error {
 	site.log.DEBUG.Println("set battery discharge control:", val)

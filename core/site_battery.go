@@ -136,6 +136,26 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 
 	switch {
 	case surplus > standbyPower:
+		// when optimizer toggle is active and has a fresh recommendation, apply its charge target
+		// capped to actual solar surplus so the grid is never used
+		chargeTarget := surplus
+		optimizerFresh := site.batterySolarOptimizer &&
+			!site.optimizerChargeTime.IsZero() &&
+			time.Since(site.optimizerChargeTime) < 10*time.Minute
+		if optimizerFresh {
+			if site.optimizerChargePower <= standbyPower {
+				stopAll(all)
+				site.log.DEBUG.Printf("solar power: optimizer recommends no charge, stop")
+				break
+			}
+			// cap to optimizer target and to live solar surplus (safety: never pull from grid)
+			chargeTarget = min(surplus, site.optimizerChargePower, -site.gridPower)
+			if chargeTarget <= standbyPower {
+				stopAll(all)
+				site.log.DEBUG.Printf("solar power: optimizer cap reduced charge below standby, stop")
+				break
+			}
+		}
 		// filter to batteries that have not yet reached their max SoC
 		var active, full []entry
 		for _, e := range all {
@@ -153,7 +173,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			stopAll(all)
 			break
 		}
-		share := surplus / float64(len(active))
+		share := chargeTarget / float64(len(active))
 		// when share is below the minimum effective power, concentrate on the lowest-SoC battery
 		// to avoid sending commands too small for the inverter to act on (e.g. Marstek ignores <50W)
 		const minEffectiveShare = 50.0
@@ -172,8 +192,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			}
 			stopAll(others)
 			active = active[bestIdx : bestIdx+1]
-			share = surplus
-			site.log.DEBUG.Printf("solar power: share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
+			share = chargeTarget
+			site.log.DEBUG.Printf("solar power: share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", chargeTarget/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
 		}
 		for _, e := range active {
 			chargePower := share

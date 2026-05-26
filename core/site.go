@@ -78,7 +78,11 @@ type Site struct {
 	bufferStartSoc          float64  // start charging on battery above this Soc
 	batteryDischargeControl bool     // prevent battery discharge for fast and planned charging
 	batterySolarControl     bool     // actively charge from surplus / discharge to cover loads
+	batterySolarOptimizer   bool     // use optimizer charge schedule when solar control is active
 	batteryGridChargeLimit  *float64 // grid charging limit
+
+	optimizerChargePower float64    // aggregate charge power (W) from last optimizer run
+	optimizerChargeTime  time.Time  // when optimizerChargePower was last set
 
 	loadpoints  []*Loadpoint             // Loadpoints
 	tariffs     *tariff.Tariffs          // Tariffs
@@ -339,6 +343,11 @@ func (site *Site) restoreSettings() error {
 	}
 	if v, err := settings.Bool(keys.BatterySolarControl); err == nil {
 		if err := site.SetBatterySolarControl(v); err != nil && !errors.Is(err, ErrBatteryControlNotAvailable) {
+			return err
+		}
+	}
+	if v, err := settings.Bool(keys.BatterySolarOptimizer); err == nil {
+		if err := site.SetBatterySolarOptimizer(v); err != nil && !errors.Is(err, ErrBatteryControlNotAvailable) {
 			return err
 		}
 	}
@@ -1063,6 +1072,7 @@ func (site *Site) prepare() {
 	site.publish(keys.BatteryMode, site.batteryMode)
 	site.publish(keys.BatteryDischargeControl, site.batteryDischargeControl)
 	site.publish(keys.BatterySolarControl, site.batterySolarControl)
+	site.publish(keys.BatterySolarOptimizer, site.batterySolarOptimizer)
 	site.publish(keys.ResidualPower, site.GetResidualPower())
 	site.publish(keys.SmartCostAvailable, site.isDynamicTariff(api.TariffUsagePlanner))
 	site.publish(keys.SmartFeedInPriorityAvailable, site.isDynamicTariff(api.TariffUsageFeedIn))

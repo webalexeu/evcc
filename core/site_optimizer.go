@@ -285,6 +285,24 @@ func (site *Site) optimizerUpdate(battery []types.Measurement) error {
 
 	site.publish(keys.Battery, site.battery)
 
+	// extract aggregate charge power for home batteries from SoC trajectory
+	// use slot index 1→2 (next full 15-min window) to avoid partial-slot distortion
+	var totalCharge float64
+	for i, detail := range details.BatteryDetails {
+		if detail.Type != batteryTypeBattery {
+			continue
+		}
+		soc := resp.JSON200.Batteries[i].StateOfCharge
+		if len(soc) >= 3 {
+			delta := soc[2] - soc[1] // Wh change over next full 15-min slot
+			if delta > 0 {
+				totalCharge += float64(delta) * 4.0 // Wh × 4 = W (15-min slot = 0.25h)
+			}
+		}
+	}
+	site.optimizerChargePower = totalCharge
+	site.optimizerChargeTime = time.Now()
+
 	return nil
 }
 
