@@ -132,8 +132,6 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		return soc, err == nil
 	}
 
-	inPriorityMode := site.battery.Soc < site.prioritySoc
-
 	switch {
 	case surplus > standbyPower:
 		// when optimizer toggle is active and has a fresh recommendation, apply its charge target
@@ -208,7 +206,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		}
 		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 
-	case !inPriorityMode && sitePower > standbyPower:
+	case sitePower > standbyPower:
 		// exclude EV charger load from discharge target when battery-supported is not active
 		// (bufferSoc not configured or SoC below threshold) or discharge control is active
 		batteryBuffered := site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
@@ -251,11 +249,6 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			}
 		}
 		site.log.DEBUG.Printf("solar power: discharge %.0fW deficit across %d/%d batteries", dischargeTarget, len(active), len(all))
-
-	case inPriorityMode && surplus <= standbyPower:
-		// no solar surplus in priority mode — stop to prevent unwanted discharge
-		stopAll(all)
-		site.log.DEBUG.Printf("solar power: priority mode, surplus %.0fW insufficient, stop", surplus)
 
 	default:
 		stopAll(all)
