@@ -132,28 +132,51 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 		return soc, err == nil
 	}
 
-	switch {
-	case surplus > standbyPower:
-		// when optimizer toggle is active and has a fresh recommendation, apply its charge target
-		// capped to actual solar surplus so the grid is never used
-		chargeTarget := surplus
-		optimizerFresh := site.batterySolarOptimizer &&
-			!site.optimizerChargeTime.IsZero() &&
-			time.Since(site.optimizerChargeTime) < 10*time.Minute
-		if optimizerFresh {
-			if site.optimizerChargePower <= standbyPower {
-				stopAll(all)
-				site.log.DEBUG.Printf("solar power: optimizer recommends no charge, stop")
-				break
-			}
-			// cap to optimizer target and to live solar surplus (safety: never pull from grid)
-			chargeTarget = min(surplus, site.optimizerChargePower, -site.gridPower)
-			if chargeTarget <= standbyPower {
-				stopAll(all)
-				site.log.DEBUG.Printf("solar power: optimizer cap reduced charge below standby, stop")
-				break
+	// when optimizer toggle is active and has a fresh recommendation, command each battery directly
+	if site.batterySolarOptimizer &&
+		!site.optimizerChargeTime.IsZero() &&
+		time.Since(site.optimizerChargeTime) < 10*time.Minute {
+		for _, e := range all {
+			name := e.dev.Config().Name
+			target := site.optimizerBatteryPowers[name]
+			switch {
+			case target > standbyPower:
+				chargePower := target
+				if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+					if maxCharge, _ := limiter.GetPowerLimits(); maxCharge > 0 && chargePower > maxCharge {
+						chargePower = maxCharge
+					}
+				}
+				if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
+					site.log.ERROR.Printf("battery charge power: %v", err)
+				}
+				site.log.DEBUG.Printf("solar power: optimizer charge battery %s %.0fW", name, chargePower)
+			case target < -standbyPower:
+				dischargePower := -target
+				if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+					if _, maxDischarge := limiter.GetPowerLimits(); maxDischarge > 0 && dischargePower > maxDischarge {
+						dischargePower = maxDischarge
+					}
+				}
+				if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
+					site.log.ERROR.Printf("battery discharge power: %v", err)
+				}
+				site.log.DEBUG.Printf("solar power: optimizer discharge battery %s %.0fW", name, dischargePower)
+			default:
+				if err := e.ctrl.SetBatteryChargePower(0); err != nil {
+					site.log.ERROR.Printf("battery charge power: %v", err)
+				}
+				if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
+					site.log.ERROR.Printf("battery discharge power: %v", err)
+				}
+				site.log.DEBUG.Printf("solar power: optimizer stop battery %s", name)
 			}
 		}
+		return
+	}
+
+	switch {
+	case surplus > standbyPower:
 		// filter to batteries that have not yet reached their max SoC
 		var active, full []entry
 		for _, e := range all {
@@ -171,7 +194,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			stopAll(all)
 			break
 		}
-		share := chargeTarget / float64(len(active))
+		share := surplus / float64(len(active))
 		// when share is below the minimum effective power, concentrate on the lowest-SoC battery
 		// to avoid sending commands too small for the inverter to act on (e.g. Marstek ignores <50W)
 		const minEffectiveShare = 50.0
@@ -190,8 +213,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower, totalChargePo
 			}
 			stopAll(others)
 			active = active[bestIdx : bestIdx+1]
-			share = chargeTarget
-			site.log.DEBUG.Printf("solar power: share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", chargeTarget/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
+			share = surplus
+			site.log.DEBUG.Printf("solar power: share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
 		}
 		for _, e := range active {
 			chargePower := share

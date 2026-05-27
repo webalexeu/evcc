@@ -81,8 +81,8 @@ type Site struct {
 	batterySolarOptimizer   bool     // use optimizer charge schedule when solar control is active
 	batteryGridChargeLimit  *float64 // grid charging limit
 
-	optimizerChargePower float64    // aggregate charge power (W) from last optimizer run
-	optimizerChargeTime  time.Time  // when optimizerChargePower was last set
+	optimizerBatteryPowers map[string]float64 // per home battery current-slot target (W): positive=charge, negative=discharge
+	optimizerChargeTime    time.Time          // when optimizerBatteryPowers was last set
 
 	loadpoints  []*Loadpoint             // Loadpoints
 	tariffs     *tariff.Tariffs          // Tariffs
