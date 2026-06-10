@@ -202,14 +202,24 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		}
 	}
 
-	// read per-device SoC; returns 0 and ok=false when not available
-	deviceSoc := func(dev config.Device[api.Meter]) (float64, bool) {
-		bat, ok := api.Cap[api.Battery](dev.Instance())
-		if !ok {
-			return 0, false
+	// read each battery's SoC once per cycle; selection loops and sort comparators
+	// hit this cache instead of issuing repeated Modbus reads
+	type socReading struct {
+		soc float64
+		ok  bool
+	}
+	socCache := make(map[string]socReading, len(all))
+	for _, e := range all {
+		if bat, ok := api.Cap[api.Battery](e.dev.Instance()); ok {
+			soc, err := bat.Soc()
+			socCache[e.dev.Config().Name] = socReading{soc, err == nil}
 		}
-		soc, err := bat.Soc()
-		return soc, err == nil
+	}
+
+	// per-device SoC from cache; returns 0 and ok=false when not available
+	deviceSoc := func(dev config.Device[api.Meter]) (float64, bool) {
+		r := socCache[dev.Config().Name]
+		return r.soc, r.ok
 	}
 
 	// Dead band: require surplus/deficit to exceed standbyPower + configurable dead band
@@ -225,6 +235,9 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		var active, full []entry
 		var chargeSwapIn, chargeSwapOut entry
 		var hasChargeSwap bool
+		// stops are deferred until after the active batteries received their commands,
+		// keeping the Modbus writes for inactive batteries off the critical path
+		var deferStop []entry
 		for _, e := range all {
 			soc, ok := deviceSoc(e.dev)
 			if !site.batteryCalibrationCharge {
@@ -238,7 +251,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			_ = ok
 			active = append(active, e)
 		}
-		stopAll(full)
+		deferStop = append(deferStop, full...)
 		if len(active) == 0 {
 			stopAll(all)
 			break
@@ -309,15 +322,13 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							site.batteryChargeActive[i] = e.dev.Config().Name
 						}
 						if hasChargeSwap {
-							var stopNow []entry
 							for _, c := range cand {
 								if c.dev.Config().Name != chargeSwapOut.dev.Config().Name {
-									stopNow = append(stopNow, c)
+									deferStop = append(deferStop, c)
 								}
 							}
-							stopAll(stopNow)
 						} else {
-							stopAll(cand)
+							deferStop = append(deferStop, cand...)
 						}
 						active = sel
 					} else {
@@ -327,7 +338,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							sj, _ := deviceSoc(active[j].dev)
 							return si < sj
 						})
-						stopAll(active[needed:])
+						deferStop = append(deferStop, active[needed:]...)
 						active = active[:needed]
 					}
 					site.log.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat rated", needed, len(all)-len(full), surplus, maxChargePerBat)
@@ -351,7 +362,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							others = append(others, e)
 						}
 					}
-					stopAll(others)
+					deferStop = append(deferStop, others...)
 					active = active[bestIdx : bestIdx+1]
 					site.log.DEBUG.Printf("solar power: charge share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
 				}
@@ -399,9 +410,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					site.log.ERROR.Printf("battery charge power fallback: %v", err)
 				}
 			} else {
-				stopAll([]entry{chargeSwapOut})
+				deferStop = append(deferStop, chargeSwapOut)
 			}
 		}
+		stopAll(deferStop)
 		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 
 	case sitePower > threshold:
@@ -420,6 +432,9 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		var active, empty []entry
 		var dischargeSwapIn, dischargeSwapOut entry
 		var hasDischargeSwap bool
+		// stops are deferred until after the active batteries received their commands,
+		// keeping the Modbus writes for inactive batteries off the critical path
+		var deferStop []entry
 		for _, e := range all {
 			soc, ok := deviceSoc(e.dev)
 			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok && hasLimiter {
@@ -430,7 +445,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 			active = append(active, e)
 		}
-		stopAll(empty)
+		deferStop = append(deferStop, empty...)
 		if len(active) == 0 {
 			stopAll(all)
 			break
@@ -498,15 +513,13 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							site.batteryDischargeActive[i] = e.dev.Config().Name
 						}
 						if hasDischargeSwap {
-							var stopNow []entry
 							for _, c := range cand {
 								if c.dev.Config().Name != dischargeSwapOut.dev.Config().Name {
-									stopNow = append(stopNow, c)
+									deferStop = append(deferStop, c)
 								}
 							}
-							stopAll(stopNow)
 						} else {
-							stopAll(cand)
+							deferStop = append(deferStop, cand...)
 						}
 						active = sel
 					} else {
@@ -515,7 +528,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							sj, _ := deviceSoc(active[j].dev)
 							return si > sj
 						})
-						stopAll(active[needed:])
+						deferStop = append(deferStop, active[needed:]...)
 						active = active[:needed]
 					}
 					site.log.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat rated", needed, len(all)-len(empty), dischargeTarget, maxDischargePerBat)
@@ -538,7 +551,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							others = append(others, e)
 						}
 					}
-					stopAll(others)
+					deferStop = append(deferStop, others...)
 					active = active[bestIdx : bestIdx+1]
 					site.log.DEBUG.Printf("solar power: discharge share %.0fW below %.0fW min, concentrating on highest-soc battery (%.0f%%)", dischargeTarget/float64(len(all)-len(empty)), minEffectiveShare, bestSoc)
 				}
@@ -570,9 +583,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					site.log.ERROR.Printf("battery discharge power fallback: %v", err)
 				}
 			} else {
-				stopAll([]entry{dischargeSwapOut})
+				deferStop = append(deferStop, dischargeSwapOut)
 			}
 		}
+		stopAll(deferStop)
 		site.log.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 
 	default:
