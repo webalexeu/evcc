@@ -19,6 +19,7 @@ import (
 const (
 	chargeTaperRange = 5.0  // begin tapering this many % below maxSoc
 	chargeMinFactor  = 0.25 // taper down to 25% of requested power at maxSoc
+	stopRefreshTicks = 10   // re-send stop to an already-stopped battery every N ticks (watchdog heartbeat)
 )
 
 // computeTier returns the number of batteries to activate given the current power target,
@@ -191,13 +192,33 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		return
 	}
 
+	if site.batteryStopped == nil {
+		site.batteryStopped = make(map[string]int)
+	}
+
+	// stop the given batteries; skip units already stopped, re-sending the stop only
+	// every stopRefreshTicks as a watchdog heartbeat to keep RS485 control alive
 	stopAll := func(entries []entry) {
 		for _, e := range entries {
+			name := e.dev.Config().Name
+			if n, ok := site.batteryStopped[name]; ok && n < stopRefreshTicks {
+				site.batteryStopped[name] = n + 1
+				continue
+			}
+			failed := false
 			if err := e.ctrl.SetBatteryChargePower(0); err != nil {
 				site.log.ERROR.Printf("battery charge power: %v", err)
+				failed = true
 			}
 			if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
 				site.log.ERROR.Printf("battery discharge power: %v", err)
+				failed = true
+			}
+			if failed {
+				// retry next tick
+				delete(site.batteryStopped, name)
+			} else {
+				site.batteryStopped[name] = 0
 			}
 		}
 	}
@@ -396,6 +417,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				}
 			}
 
+			delete(site.batteryStopped, e.dev.Config().Name)
 			if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
 				site.log.ERROR.Printf("battery charge power: %v", err)
 				if hasChargeSwap && e.dev.Config().Name == chargeSwapIn.dev.Config().Name {
@@ -406,6 +428,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		if hasChargeSwap {
 			if chargeSwapInFailed {
 				site.log.WARN.Printf("solar power: charge swap failed, keeping %s", chargeSwapOut.dev.Config().Name)
+				delete(site.batteryStopped, chargeSwapOut.dev.Config().Name)
 				if err := chargeSwapOut.ctrl.SetBatteryChargePower(share); err != nil {
 					site.log.ERROR.Printf("battery charge power fallback: %v", err)
 				}
@@ -413,8 +436,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				deferStop = append(deferStop, chargeSwapOut)
 			}
 		}
-		stopAll(deferStop)
 		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
+		stopAll(deferStop)
 
 	case sitePower > threshold:
 		// Compute discharge target by subtracting EV power that the battery should NOT cover
@@ -569,6 +592,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				}
 			}
 
+			delete(site.batteryStopped, e.dev.Config().Name)
 			if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
 				site.log.ERROR.Printf("battery discharge power: %v", err)
 				if hasDischargeSwap && e.dev.Config().Name == dischargeSwapIn.dev.Config().Name {
@@ -579,6 +603,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		if hasDischargeSwap {
 			if dischargeSwapInFailed {
 				site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
+				delete(site.batteryStopped, dischargeSwapOut.dev.Config().Name)
 				if err := dischargeSwapOut.ctrl.SetBatteryDischargePower(share); err != nil {
 					site.log.ERROR.Printf("battery discharge power fallback: %v", err)
 				}
@@ -586,8 +611,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				deferStop = append(deferStop, dischargeSwapOut)
 			}
 		}
-		stopAll(deferStop)
 		site.log.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
+		stopAll(deferStop)
 
 	default:
 		stopAll(all)
