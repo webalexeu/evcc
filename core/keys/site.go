@@ -39,10 +39,18 @@ const (
 
 	// battery settings
 	BatteryDischargeControl = "batteryDischargeControl"
+	BatterySolarControl      = "batterySolarControl"
+	BatteryCalibrationCharge = "batteryCalibrationCharge"
+	BatteryControlDeadBand  = "batteryControlDeadBand"
 	BatteryGridChargeLimit  = "batteryGridChargeLimit"
 	BatteryGridChargeActive = "batteryGridChargeActive"
 	BufferSoc               = "bufferSoc"
 	BufferStartSoc          = "bufferStartSoc"
+	// battery solar control sub-features
+	BatterySolarPool     = "batterySolarPool"
+	BatterySolarTiering  = "batterySolarTiering"
+	BatterySolarSticky   = "batterySolarSticky"
+	BatterySolarTapering = "batterySolarTapering"
 
 	// battery status
 	Battery     = "battery"
