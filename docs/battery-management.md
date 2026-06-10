@@ -232,6 +232,10 @@ All battery SoC values are read **once per control cycle** into a cache. Selecti
 
 Stop commands for non-selected batteries (full, empty, outside the tier) are queued and executed **after** the active batteries have received their power commands. The Modbus writes for inactive units stay off the critical path, so the active battery reacts to a load change one or more seconds sooner. During a tier shrink this causes a brief overlap (remaining battery ramps up before the other stops) which errs toward grid export — the safe direction.
 
+### Redundant stop suppression
+
+A battery that is already stopped is not re-stopped every tick. `stopAll` tracks ticks-since-last-stop per battery (`batteryStopped`) and skips the Modbus writes while the battery remains stopped, re-sending the stop every `stopRefreshTicks` (10) ticks as a watchdog heartbeat so RS485 control stays alive. Any active power command (including the swap fallback) clears the tracking so the next stop is always sent immediately; a failed stop is retried on the next tick. This frees roughly two writes per inactive battery per tick of Modbus bus time.
+
 ---
 
 ## Configuration Summary
@@ -256,3 +260,4 @@ Stop commands for non-selected batteries (full, empty, outside the tier) are que
 | `chargeMinFactor` | 25% | Minimum taper factor at maxSoc |
 | Tier hysteresis | 15% | Dead band around tier-switch boundaries |
 | Sticky SoC threshold | 3% | Minimum SoC difference to swap active battery |
+| `stopRefreshTicks` | 10 ticks | Heartbeat interval for re-sending stop to stopped batteries |

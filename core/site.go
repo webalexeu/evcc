@@ -90,6 +90,7 @@ type Site struct {
 	batteryDischargeTier    int      // tiered activation: current number of batteries discharging (0 = uninitialised)
 	batteryChargeActive     []string // sticky selection: names of batteries currently in the charge tier
 	batteryDischargeActive  []string // sticky selection: names of batteries currently in the discharge tier
+	batteryStopped          map[string]int // ticks since stop was last sent per battery; skips redundant re-stops
 
 	// optimizer settings
 	optimizerChargingStrategy string // optimizer grid charging strategy
