@@ -117,7 +117,7 @@ func (site *Site) SetBatteryMode(batMode api.BatteryMode) {
 	}
 }
 
-func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate, sitePower float64) {
+func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate, sitePower float64, sitePowerValid bool) {
 	batteryMode := site.requiredBatteryMode(batteryGridChargeActive, rate, sitePower)
 
 	// put battery into hold mode when charging is active and HEMS dimmed
@@ -138,9 +138,15 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate,
 		}
 	}
 
-	// when solar control is active, drive power-level setters on capable battery meters
+	// when solar control is active, drive power-level setters on capable battery meters.
+	// skip on failed meter read: a zero sitePower would be mistaken for "balanced" and
+	// stop all batteries for a tick — holding the last setpoints is the safe behavior.
 	if site.batterySolarControl {
-		site.applyBatterySolarPower(rate, sitePower)
+		if sitePowerValid {
+			site.applyBatterySolarPower(rate, sitePower)
+		} else {
+			site.log.DEBUG.Println("solar power: skipping tick, site power unavailable")
+		}
 	}
 }
 
@@ -600,17 +606,18 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				}
 			}
 		}
-		if hasDischargeSwap {
-			if dischargeSwapInFailed {
-				site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
-				delete(site.batteryStopped, dischargeSwapOut.dev.Config().Name)
-				if err := dischargeSwapOut.ctrl.SetBatteryDischargePower(share); err != nil {
-					site.log.ERROR.Printf("battery discharge power fallback: %v", err)
-				}
-			} else {
-				deferStop = append(deferStop, dischargeSwapOut)
+		if hasDischargeSwap && dischargeSwapInFailed {
+			site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
+			delete(site.batteryStopped, dischargeSwapOut.dev.Config().Name)
+			if err := dischargeSwapOut.ctrl.SetBatteryDischargePower(share); err != nil {
+				site.log.ERROR.Printf("battery discharge power fallback: %v", err)
 			}
 		}
+		// On successful swap the outgoing battery is intentionally NOT stopped this tick:
+		// it keeps covering the load while the incoming inverter ramps up, and is stopped
+		// on the next tick via the regular non-selected path. The brief overlap exports to
+		// grid (safe); stopping immediately would import during the ramp. Charge swaps do
+		// the opposite (stop immediately) since there the gap exports and overlap imports.
 		site.log.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 		stopAll(deferStop)
 

@@ -216,13 +216,13 @@ The control loop minimises the time between the grid measurement and the command
 
 ### Safe swap ordering
 
-When sticky selection swaps one battery for another, the command is sent to the **incoming** battery first and its Modbus result is checked before the outgoing battery is stopped:
+When sticky selection swaps one battery for another, the command is sent to the **incoming** battery first and its Modbus result is checked:
 
 1. Incoming battery receives its charge/discharge command
-2. **Success** (Modbus ACK): outgoing battery is stopped
-3. **Failure** (Modbus error): outgoing battery keeps running and receives the share as a one-tick fallback; the next tick re-evaluates selection normally
-
-This avoids both a power gap (old stopped before new responds) and a stuck state on transient Modbus failure. The brief overlap during a successful swap errs toward grid export, which is the safe direction.
+2. **Failure** (Modbus error): outgoing battery keeps running and receives the share as a one-tick fallback; the next tick re-evaluates selection normally
+3. **Success** (Modbus ACK): the outgoing battery's fate depends on direction:
+   - **Discharge swap**: the outgoing battery is *not* stopped this tick — a Modbus ACK only confirms the register write, while the incoming inverter still needs seconds to ramp up. The outgoing battery keeps covering the load for one more tick (stopped on the next tick via the regular non-selected path). The overlap briefly exports to grid (safe); stopping immediately would import during the ramp.
+   - **Charge swap**: the outgoing battery is stopped immediately (deferred). Here the asymmetry reverses: a ramp gap merely exports surplus (safe), while an overlap would charge both batteries and import from grid (unsafe).
 
 ### Per-cycle SoC cache
 
@@ -231,6 +231,10 @@ All battery SoC values are read **once per control cycle** into a cache. Selecti
 ### Deferred stops
 
 Stop commands for non-selected batteries (full, empty, outside the tier) are queued and executed **after** the active batteries have received their power commands. The Modbus writes for inactive units stay off the critical path, so the active battery reacts to a load change one or more seconds sooner. During a tier shrink this causes a brief overlap (remaining battery ramps up before the other stops) which errs toward grid export — the safe direction.
+
+### Failed meter read guard
+
+When the grid meter read fails (`sitePower` cannot be computed), the solar power control **skips the tick entirely** instead of acting on a zero value — a zero would be mistaken for "balanced" and stop all batteries for one tick, dropping the load onto the grid. Batteries hold their last setpoints until the next successful read. Battery *mode* handling still runs on such ticks.
 
 ### Redundant stop suppression
 
