@@ -210,6 +210,30 @@ In the discharge case, batteries whose SoC is at or below their hardware `minSoc
 
 ---
 
+## 15. Command Ordering & Latency
+
+The control loop minimises the time between the grid measurement and the command reaching the active battery, and avoids gaps during battery handoffs.
+
+### Safe swap ordering
+
+When sticky selection swaps one battery for another, the command is sent to the **incoming** battery first and its Modbus result is checked before the outgoing battery is stopped:
+
+1. Incoming battery receives its charge/discharge command
+2. **Success** (Modbus ACK): outgoing battery is stopped
+3. **Failure** (Modbus error): outgoing battery keeps running and receives the share as a one-tick fallback; the next tick re-evaluates selection normally
+
+This avoids both a power gap (old stopped before new responds) and a stuck state on transient Modbus failure. The brief overlap during a successful swap errs toward grid export, which is the safe direction.
+
+### Per-cycle SoC cache
+
+All battery SoC values are read **once per control cycle** into a cache. Selection loops and sort comparators perform map lookups instead of issuing repeated Modbus reads (previously the sort comparator re-read the same battery's SoC on every comparison).
+
+### Deferred stops
+
+Stop commands for non-selected batteries (full, empty, outside the tier) are queued and executed **after** the active batteries have received their power commands. The Modbus writes for inactive units stay off the critical path, so the active battery reacts to a load change one or more seconds sooner. During a tier shrink this causes a brief overlap (remaining battery ramps up before the other stops) which errs toward grid export — the safe direction.
+
+---
+
 ## Configuration Summary
 
 | Setting | API | MQTT | Default | Description |
