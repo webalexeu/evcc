@@ -1037,8 +1037,10 @@ func (site *Site) update(lp updater) {
 	}
 
 	var latestSitePower float64 // captured for battery solar control
+	var sitePowerValid bool     // false on failed meter read: solar control must skip the tick
 	if sitePower, batteryBuffered, batteryStart, err := site.sitePower(totalChargePower, flexiblePower); err == nil {
 		latestSitePower = sitePower
+		sitePowerValid = true
 		// ignore negative pvPower values as that means it is not an energy source but consumption
 		homePower := site.gridPower + max(0, site.pvPower) + site.battery.Power - totalChargePower
 		homePower = max(homePower, 0)
@@ -1091,7 +1093,7 @@ func (site *Site) update(lp updater) {
 	// update battery after reading meters to ensure that (modbus) connection is open
 	batteryGridChargeActive := site.batteryGridChargeActive(rate)
 	site.publish(keys.BatteryGridChargeActive, batteryGridChargeActive)
-	site.updateBatteryMode(batteryGridChargeActive, rate, latestSitePower)
+	site.updateBatteryMode(batteryGridChargeActive, rate, latestSitePower, sitePowerValid)
 
 	site.stats.Update(site)
 }
