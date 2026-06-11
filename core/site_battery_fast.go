@@ -19,8 +19,9 @@ const (
 	batteryPlanMaxAge     = 30 * time.Second // ignore plans when the main loop stopped updating them
 	fastLoopMinDelta      = 10.0             // W; skip Modbus writes below the grid meter noise floor
 	fastLoopGain          = 1.0              // full one-tick correction toward the measured target.
-	// Stable because the target is absolute (no integration); meter sampling skew can
-	// cause brief 1-2s ringing around the target, accepted in favor of reactivity
+	// Stable because the target is absolute (no integration); sampling skew between the
+	// meters is handled by the consistency guard below rather than by damping
+	fastLoopSkewThreshold = 100.0 // W; see meter consistency guard in batteryFastTick
 )
 
 type batteryPlanDirection int
@@ -49,6 +50,10 @@ type batteryControlPlan struct {
 	// or 0 below prioritySoc where the energy-balance formula ignores it)
 	total   float64 // currently commanded total power across entries
 	created time.Time
+
+	// previous fast tick readings for the meter consistency guard
+	lastGrid, lastBatt float64
+	lastValid          bool
 }
 
 // batteryFastLoop runs the 1s correction ticker until stopC closes.
@@ -99,6 +104,19 @@ func (site *Site) batteryFastTick() {
 			return
 		}
 		battPower += p
+	}
+
+	// Meter consistency guard: with constant load, Δgrid + Δbattery ≈ 0 between ticks.
+	// When the battery reading moved substantially but the grid register does not yet
+	// reflect it (registers update out of sync), the energy balance double-counts the
+	// battery's contribution; acting on it causes overshoot ringing. Skip the tick and
+	// let the registers align. Genuine load steps (Δbattery ≈ 0) are never skipped.
+	dGrid, dBatt := gridPower-plan.lastGrid, battPower-plan.lastBatt
+	firstTick := !plan.lastValid
+	plan.lastGrid, plan.lastBatt, plan.lastValid = gridPower, battPower, true
+	if !firstTick && math.Abs(dBatt) > fastLoopSkewThreshold && math.Abs(dGrid+dBatt) > fastLoopSkewThreshold {
+		site.log.DEBUG.Printf("solar power (fast): meters inconsistent (Δgrid %.0fW, Δbattery %.0fW), skipping tick", dGrid, dBatt)
+		return
 	}
 
 	// Absolute energy-balance target, same construction as the main loop's setpoint
