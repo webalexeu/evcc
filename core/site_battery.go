@@ -444,7 +444,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					chargeSwapInFailed = true
 				}
 			} else {
-				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Config().Name, capW * taper})
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW * taper})
 				plan.total += chargePower
 			}
 		}
@@ -638,7 +638,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					dischargeSwapInFailed = true
 				}
 			} else {
-				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Config().Name, capW})
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
 				plan.total += dischargePower
 			}
 		}
