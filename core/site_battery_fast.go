@@ -106,14 +106,24 @@ func (site *Site) batteryFastTick() {
 		battPower += p
 	}
 
-	// Meter consistency guard: with constant load, Δgrid + Δbattery ≈ 0 between ticks.
-	// When the battery reading moved substantially but the grid register does not yet
-	// reflect it (registers update out of sync), the energy balance double-counts the
-	// battery's contribution; acting on it causes overshoot ringing. Skip the tick and
-	// let the registers align. Genuine load steps (Δbattery ≈ 0) are never skipped.
+	// Meter consistency guard, two rules:
+	//
+	// 1. Stale grid register: the grid meter refreshes its registers slower than the
+	//    fast loop ticks. An identical reading carries no new information — pairing it
+	//    with a fresher battery reading makes the energy balance double-count the
+	//    battery's ramping contribution. Only correct on fresh grid samples.
+	//
+	// 2. Sampling skew: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When
+	//    the battery reading moved substantially without the grid reflecting it, the
+	//    registers are out of sync — skip and let them align. Genuine load steps
+	//    (Δbattery ≈ 0) are never skipped.
 	dGrid, dBatt := gridPower-plan.lastGrid, battPower-plan.lastBatt
 	firstTick := !plan.lastValid
+	gridStale := !firstTick && gridPower == plan.lastGrid
 	plan.lastGrid, plan.lastBatt, plan.lastValid = gridPower, battPower, true
+	if gridStale {
+		return
+	}
 	if !firstTick && math.Abs(dBatt) > fastLoopSkewThreshold && math.Abs(dGrid+dBatt) > fastLoopSkewThreshold {
 		site.log.DEBUG.Printf("solar power (fast): meters inconsistent (Δgrid %.0fW, Δbattery %.0fW), skipping tick", dGrid, dBatt)
 		return
