@@ -43,8 +43,10 @@ type batteryControlPlan struct {
 	direction  batteryPlanDirection
 	entries    []batteryPlanEntry
 	evExcluded float64 // W of EV charge power the battery must not cover (discharge only)
-	total      float64 // currently commanded total power across entries
-	created    time.Time
+	gridOffset float64 // grid setpoint offset the main loop steered toward (residualPower,
+	// or 0 below prioritySoc where the energy-balance formula ignores it)
+	total   float64 // currently commanded total power across entries
+	created time.Time
 }
 
 // batteryFastLoop runs the 1s correction ticker until stopC closes.
@@ -84,16 +86,14 @@ func (site *Site) batteryFastTick() {
 	}
 
 	// Incremental zero-grid correction using the commanded total as battery power proxy:
-	// no battery or PV meter reads needed. Steady state (grid ≈ -residual) yields
+	// no battery or PV meter reads needed. Steady state (grid ≈ -gridOffset) yields
 	// target == plan.total, so the loop is quiescent until grid moves.
-	residual := site.GetResidualPower()
-
 	var correction float64
 	switch plan.direction {
 	case batteryPlanDischarge:
-		correction = gridPower + residual - plan.evExcluded
+		correction = gridPower + plan.gridOffset - plan.evExcluded
 	case batteryPlanCharge:
-		correction = -(gridPower + residual)
+		correction = -(gridPower + plan.gridOffset)
 	}
 	target := math.Max(plan.total+fastLoopGain*correction, 0)
 
