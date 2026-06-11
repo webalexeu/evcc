@@ -91,6 +91,8 @@ type Site struct {
 	batteryChargeActive     []string // sticky selection: names of batteries currently in the charge tier
 	batteryDischargeActive  []string // sticky selection: names of batteries currently in the discharge tier
 	batteryStopped          map[string]int // ticks since stop was last sent per battery; skips redundant re-stops
+	batteryPlanMu           sync.Mutex          // guards batteryPlan and serializes main loop battery section vs fast loop
+	batteryPlan             *batteryControlPlan // contract between main loop (writes) and fast loop (adjusts)
 
 	// optimizer settings
 	optimizerChargingStrategy string // optimizer grid charging strategy
@@ -1220,6 +1222,10 @@ func (site *Site) Run(stopC chan struct{}, interval time.Duration) {
 	loadpointChan := make(chan updater)
 	if site.IsConfigured() {
 		go site.loopLoadpoints(loadpointChan)
+	}
+
+	if site.batteryConfigured() {
+		go site.batteryFastLoop(stopC)
 	}
 
 	site.update(<-loadpointChan) // start immediately
