@@ -153,6 +153,14 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate,
 // applyBatterySolarPower calls SetBatteryChargePower / SetBatteryDischargePower on each battery
 // meter that implements BatteryPowerController, proportional to the solar surplus or deficit.
 func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
+	// serialize against the fast loop and publish the control plan for it on exit;
+	// paths that don't fill the plan leave it idle, which parks the fast loop
+	site.batteryPlanMu.Lock()
+	defer site.batteryPlanMu.Unlock()
+
+	plan := &batteryControlPlan{created: time.Now()}
+	defer func() { site.batteryPlan = plan }()
+
 	var evPower float64
 	for _, lp := range site.loadpoints {
 		if !lp.IsHeating() {
@@ -403,12 +411,17 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		for _, e := range active {
 			chargePower := share
 
+			var capW float64
 			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
-				if maxCharge, _ := limiter.GetPowerLimits(); maxCharge > 0 && chargePower > maxCharge {
-					chargePower = maxCharge
+				if maxCharge, _ := limiter.GetPowerLimits(); maxCharge > 0 {
+					capW = maxCharge
+					if chargePower > maxCharge {
+						chargePower = maxCharge
+					}
 				}
 			}
 
+			taper := 1.0
 			if site.batterySolarTapering && !site.batteryCalibrationCharge {
 				if limiter, ok := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok {
 					if _, maxSoc := limiter.GetSocLimits(); maxSoc > 0 {
@@ -418,6 +431,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 								factor = chargeMinFactor
 							}
 							chargePower *= factor
+							taper = factor
 						}
 					}
 				}
@@ -429,7 +443,15 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				if hasChargeSwap && e.dev.Config().Name == chargeSwapIn.dev.Config().Name {
 					chargeSwapInFailed = true
 				}
+			} else {
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Config().Name, capW * taper})
+				plan.total += chargePower
 			}
+		}
+		// On swap ticks the plan stays idle for one main tick: inverter ramps make the
+		// fast loop's commanded-power proxy unreliable until the handoff settles.
+		if !hasChargeSwap {
+			plan.direction = batteryPlanCharge
 		}
 		if hasChargeSwap {
 			if chargeSwapInFailed {
@@ -450,8 +472,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		// when battery SoC is below bufferSoc or discharge control is active.
 		batteryBufferedEv := site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
 		dischargeTarget := sitePower
+		var evExcluded float64
 		if !batteryBufferedEv || site.dischargeControlActive(rate) {
 			dischargeTarget -= evPower
+			evExcluded = evPower
 		}
 		if dischargeTarget <= standbyPower {
 			stopAll(all)
@@ -592,9 +616,13 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		for _, e := range active {
 			dischargePower := share
 
+			var capW float64
 			if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
-				if _, maxDischarge := limiter.GetPowerLimits(); maxDischarge > 0 && dischargePower > maxDischarge {
-					dischargePower = maxDischarge
+				if _, maxDischarge := limiter.GetPowerLimits(); maxDischarge > 0 {
+					capW = maxDischarge
+					if dischargePower > maxDischarge {
+						dischargePower = maxDischarge
+					}
 				}
 			}
 
@@ -604,7 +632,17 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				if hasDischargeSwap && e.dev.Config().Name == dischargeSwapIn.dev.Config().Name {
 					dischargeSwapInFailed = true
 				}
+			} else {
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Config().Name, capW})
+				plan.total += dischargePower
 			}
+		}
+		// On swap ticks the plan stays idle for one main tick: the outgoing battery still
+		// covers part of the load during the overlap, which would mislead the fast loop's
+		// commanded-power proxy and make it throttle the incoming battery.
+		if !hasDischargeSwap {
+			plan.direction = batteryPlanDischarge
+			plan.evExcluded = evExcluded
 		}
 		if hasDischargeSwap && dischargeSwapInFailed {
 			site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)

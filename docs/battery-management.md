@@ -242,6 +242,33 @@ A battery that is already stopped is not re-stopped every tick. `stopAll` tracks
 
 ---
 
+## 16. Battery Fast Loop
+
+A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap between main loop ticks. The split keeps all intelligence in the main loop:
+
+| | Main loop | Fast loop |
+|---|---|---|
+| Direction (charge/discharge/idle) | ✔ decides | never changes |
+| Tiering / sticky / swaps | ✔ | — |
+| Stop commands / mode writes | ✔ | — |
+| SoC reads / taper | ✔ | — |
+| Power re-scaling vs live grid | baseline | ✔ every 1s |
+
+**Contract**: the main loop publishes a `batteryControlPlan` snapshot (direction, active entries with effective power caps, EV-excluded power, commanded total) at the end of every `applyBatterySolarPower` run. Both sides synchronize on `batteryPlanMu`, which also serializes the entire main-loop battery section against fast-loop ticks — no stale-plan write can re-activate a stopped battery.
+
+**Correction math** (no battery/PV reads — single grid meter read per tick):
+- discharge: `target = total + gridPower + residualPower − evExcluded`
+- charge: `target = total − (gridPower + residualPower)`
+- damped by `fastLoopGain` (0.5) per tick to avoid overshoot while inverters ramp; clamped to `[0, cap]` per battery; corrections < 25W are skipped
+
+**Safety rules**:
+- Direction flips are never done by the fast loop — corrections clamp at 0 and wait for the main loop
+- Plan stays **idle on swap ticks** (ramp/overlap makes the commanded-power proxy unreliable) — fast loop pauses for one main tick
+- Plan older than 30s (main loop stalled) → fast loop parks
+- Failed grid read → skip tick
+
+---
+
 ## Configuration Summary
 
 | Setting | API | MQTT | Default | Description |
