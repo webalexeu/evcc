@@ -158,7 +158,14 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 	site.batteryPlanMu.Lock()
 	defer site.batteryPlanMu.Unlock()
 
-	plan := &batteryControlPlan{created: time.Now()}
+	// seed the fast loop's meter consistency guard from this tick's readings so the
+	// first fast tick after the plan swap is guarded as well
+	plan := &batteryControlPlan{
+		created:   time.Now(),
+		lastGrid:  site.gridPower,
+		lastBatt:  site.battery.Power,
+		lastValid: true,
+	}
 	defer func() { site.batteryPlan = plan }()
 
 	var evPower float64

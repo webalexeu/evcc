@@ -262,7 +262,10 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 - `gridOffset` is the grid setpoint the main loop steered toward (residualPower, or 0 below prioritySoc)
 - The target is an **absolute energy balance from measurements**, not an increment on the commanded value. This is essential: during inverter ramps the commanded power is not yet delivered, and integrating the still-visible grid error against the commanded total double-counts it and produces full-scale oscillation (observed in practice). The measured form is ramp-state invariant.
 - applied at full gain (1.0) for one-tick reaction; clamped to `[0, cap]` per battery; corrections < 10W are skipped
-- **Meter consistency guard**: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When |Δbattery| > 100W while |Δgrid + Δbattery| > 100W, the registers are out of sync (battery reading moved before the grid meter reflects it) and the energy balance would double-count — the tick is skipped until the registers align. Genuine load steps (Δbattery ≈ 0) are never skipped, preserving full reactivity.
+- **Meter consistency guard**, two rules evaluated per tick:
+  1. *Stale grid register*: a grid reading identical to the previous tick carries no new information (the meter refreshes slower than 1s) — the tick is skipped silently. Corrections only happen on fresh grid samples.
+  2. *Sampling skew*: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When |Δbattery| > 100W while |Δgrid + Δbattery| > 100W, the registers are out of sync and the energy balance would double-count — the tick is skipped until they align.
+  Genuine load steps (Δbattery ≈ 0, fresh grid) are never skipped, preserving one-tick reactivity. The guard history is seeded from the main loop's readings at plan creation, so the first fast tick after each main tick is guarded too.
 
 **Safety rules**:
 - Direction flips are never done by the fast loop — corrections clamp at 0 and wait for the main loop
