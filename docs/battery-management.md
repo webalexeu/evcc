@@ -256,10 +256,12 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 
 **Contract**: the main loop publishes a `batteryControlPlan` snapshot (direction, active entries with effective power caps, EV-excluded power, commanded total) at the end of every `applyBatterySolarPower` run. Both sides synchronize on `batteryPlanMu`, which also serializes the entire main-loop battery section against fast-loop ticks — no stale-plan write can re-activate a stopped battery.
 
-**Correction math** (no battery/PV reads — single grid meter read per tick):
-- discharge: `target = total + gridPower + residualPower − evExcluded`
-- charge: `target = total − (gridPower + residualPower)`
-- damped by `fastLoopGain` (0.5) per tick to avoid overshoot while inverters ramp; clamped to `[0, cap]` per battery; corrections < 25W are skipped
+**Correction math** (grid meter read + one power read per active battery per tick):
+- discharge: `target = batteryMeasured + gridPower + gridOffset − evExcluded`
+- charge: `target = −batteryMeasured − (gridPower + gridOffset)`
+- `gridOffset` is the grid setpoint the main loop steered toward (residualPower, or 0 below prioritySoc)
+- The target is an **absolute energy balance from measurements**, not an increment on the commanded value. This is essential: during inverter ramps the commanded power is not yet delivered, and integrating the still-visible grid error against the commanded total double-counts it and produces full-scale oscillation (observed in practice). The measured form is ramp-state invariant.
+- smoothed by `fastLoopGain` (0.5) per tick to absorb grid/battery meter sampling skew; clamped to `[0, cap]` per battery; corrections < 25W are skipped
 
 **Safety rules**:
 - Direction flips are never done by the fast loop — corrections clamp at 0 and wait for the main loop

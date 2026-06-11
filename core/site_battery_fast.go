@@ -18,8 +18,8 @@ const (
 	batteryFastLoopPeriod = time.Second      // grid meters typically refresh their registers at 1s
 	batteryPlanMaxAge     = 30 * time.Second // ignore plans when the main loop stopped updating them
 	fastLoopMinDelta      = 25.0             // W; skip Modbus writes for smaller corrections
-	fastLoopGain          = 0.5              // damping: fraction of the correction applied per tick;
-	// guards against overshoot while the inverter is still ramping toward the previous command
+	fastLoopGain          = 0.5              // smoothing toward the measured energy-balance target;
+	// absorbs sampling skew between grid and battery meters
 )
 
 type batteryPlanDirection int
@@ -31,9 +31,10 @@ const (
 )
 
 type batteryPlanEntry struct {
-	ctrl api.BatteryPowerController
-	name string
-	cap  float64 // effective per-battery power limit in W incl. taper; 0 = uncapped
+	ctrl  api.BatteryPowerController
+	meter api.Meter
+	name  string
+	cap   float64 // effective per-battery power limit in W incl. taper; 0 = uncapped
 }
 
 // batteryControlPlan is the contract between the main loop and the fast loop.
@@ -85,17 +86,32 @@ func (site *Site) batteryFastTick() {
 		return
 	}
 
-	// Incremental zero-grid correction using the commanded total as battery power proxy:
-	// no battery or PV meter reads needed. Steady state (grid ≈ -gridOffset) yields
-	// target == plan.total, so the loop is quiescent until grid moves.
-	var correction float64
+	// Measured battery power of the active set. Using measurements instead of the
+	// commanded total is essential: during inverter ramps the commanded value is not
+	// yet delivered, and integrating the still-visible grid error against it causes
+	// runaway oscillation. The energy-balance target below is ramp-state invariant.
+	var battPower float64
+	for _, e := range plan.entries {
+		p, err := e.meter.CurrentPower()
+		if err != nil {
+			site.log.DEBUG.Printf("solar power (fast): %s power: %v", e.name, err)
+			return
+		}
+		battPower += p
+	}
+
+	// Absolute energy-balance target, same construction as the main loop's setpoint
+	// (battery power convention: positive = discharging, negative = charging).
+	// Steady state (grid ≈ -gridOffset) reproduces the currently delivered power, so
+	// the loop is quiescent until grid moves.
+	var target float64
 	switch plan.direction {
 	case batteryPlanDischarge:
-		correction = gridPower + plan.gridOffset - plan.evExcluded
+		target = battPower + gridPower + plan.gridOffset - plan.evExcluded
 	case batteryPlanCharge:
-		correction = -(gridPower + plan.gridOffset)
+		target = -battPower - (gridPower + plan.gridOffset)
 	}
-	target := math.Max(plan.total+fastLoopGain*correction, 0)
+	target = math.Max(plan.total+fastLoopGain*(target-plan.total), 0)
 
 	if math.Abs(target-plan.total) < fastLoopMinDelta {
 		return
@@ -124,7 +140,7 @@ func (site *Site) batteryFastTick() {
 	}
 
 	dir := map[batteryPlanDirection]string{batteryPlanCharge: "charge", batteryPlanDischarge: "discharge"}[plan.direction]
-	site.log.DEBUG.Printf("solar power (fast): %s %.0fW → %.0fW (grid %.0fW)", dir, plan.total, commanded, gridPower)
+	site.log.DEBUG.Printf("solar power (fast): %s %.0fW → %.0fW (grid %.0fW, battery %.0fW)", dir, plan.total, commanded, gridPower, battPower)
 
 	plan.total = commanded
 }
