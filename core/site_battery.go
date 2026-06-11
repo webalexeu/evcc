@@ -452,6 +452,11 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		// fast loop's commanded-power proxy unreliable until the handoff settles.
 		if !hasChargeSwap {
 			plan.direction = batteryPlanCharge
+			// below prioritySoc the energy-balance surplus ignores residualPower; the fast
+			// loop must steer toward the same grid setpoint or the loops fight each other
+			if site.battery.Soc >= site.prioritySoc {
+				plan.gridOffset = site.GetResidualPower()
+			}
 		}
 		if hasChargeSwap {
 			if chargeSwapInFailed {
@@ -643,6 +648,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		if !hasDischargeSwap {
 			plan.direction = batteryPlanDischarge
 			plan.evExcluded = evExcluded
+			plan.gridOffset = site.GetResidualPower()
 		}
 		if hasDischargeSwap && dischargeSwapInFailed {
 			site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
