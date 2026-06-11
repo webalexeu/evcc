@@ -18,9 +18,9 @@ const (
 	batteryFastLoopPeriod = time.Second      // grid meters typically refresh their registers at 1s
 	batteryPlanMaxAge     = 30 * time.Second // ignore plans when the main loop stopped updating them
 	fastLoopMinDelta      = 10.0             // W; skip Modbus writes below the grid meter noise floor
-	fastLoopGain          = 0.7              // smoothing toward the measured energy-balance target;
-	// absorbs sampling skew between grid and battery meters (1.0 would fully command
-	// phantom errors when one meter register updates before the other)
+	fastLoopGain          = 1.0              // full one-tick correction toward the measured target.
+	// Stable because the target is absolute (no integration); meter sampling skew can
+	// cause brief 1-2s ringing around the target, accepted in favor of reactivity
 )
 
 type batteryPlanDirection int
