@@ -261,7 +261,8 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 - charge: `target = −batteryMeasured − (gridPower + gridOffset)`
 - `gridOffset` is the grid setpoint the main loop steered toward (residualPower, or 0 below prioritySoc)
 - The target is an **absolute energy balance from measurements**, not an increment on the commanded value. This is essential: during inverter ramps the commanded power is not yet delivered, and integrating the still-visible grid error against the commanded total double-counts it and produces full-scale oscillation (observed in practice). The measured form is ramp-state invariant.
-- applied by `fastLoopGain` (1.0) per tick to absorb grid/battery meter sampling skew; clamped to `[0, cap]` per battery; corrections < 10W are skipped
+- applied at full gain (1.0) for one-tick reaction; clamped to `[0, cap]` per battery; corrections < 10W are skipped
+- **Meter consistency guard**: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When |Δbattery| > 100W while |Δgrid + Δbattery| > 100W, the registers are out of sync (battery reading moved before the grid meter reflects it) and the energy balance would double-count — the tick is skipped until the registers align. Genuine load steps (Δbattery ≈ 0) are never skipped, preserving full reactivity.
 
 **Safety rules**:
 - Direction flips are never done by the fast loop — corrections clamp at 0 and wait for the main loop
