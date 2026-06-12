@@ -2,6 +2,7 @@ package core
 
 import (
 	"math"
+	"sync"
 	"time"
 
 	"github.com/evcc-io/evcc/api"
@@ -9,19 +10,23 @@ import (
 
 // The battery fast loop is a thin companion to applyBatterySolarPower. All decisions
 // (charge/discharge direction, tiering, sticky selection, swaps, stops, mode handling)
-// remain in the main loop. The fast loop only re-scales the power commands of the
-// currently active batteries against a fresh grid reading, closing the gap between
+// remain in the main loop. The fast loop owns the power values of the currently active
+// batteries: it re-scales them against fresh grid readings, closing the gap between
 // main loop ticks. It never changes direction, never selects batteries and never
 // sends stop commands - when its correction reaches zero it clamps and waits for
 // the main loop to decide.
 const (
-	batteryFastLoopPeriod = time.Second      // grid meters typically refresh their registers at 1s
-	batteryPlanMaxAge     = 30 * time.Second // ignore plans when the main loop stopped updating them
-	fastLoopMinDelta      = 10.0             // W; skip Modbus writes below the grid meter noise floor
-	fastLoopGain          = 1.0              // full one-tick correction toward the measured target.
+	batteryFastLoopPeriod = 500 * time.Millisecond // grid samples are picked up almost as
+	// soon as the meter refreshes its registers; stale ticks cost a single TCP read
+	batteryPlanMaxAge = 30 * time.Second // ignore plans when the main loop stopped updating them
+	fastLoopMinDelta  = 10.0             // W; skip Modbus writes below the grid meter noise floor
+	fastLoopGain      = 1.0              // full one-tick correction toward the measured target.
 	// Stable because the target is absolute (no integration); sampling skew between the
-	// meters is handled by the consistency guard below rather than by damping
-	fastLoopSkewThreshold = 100.0 // W; see meter consistency guard in batteryFastTick
+	// meters is handled by the consistency guard rather than by damping
+	fastLoopSkewThreshold = 100.0            // W; see meter consistency guard in batteryFastTick
+	fastLoopHeartbeat     = 10 * time.Second // re-send the current setpoints when no write
+	// happened for this long, keeping the inverters' RS485 watchdog alive now that the
+	// main loop no longer re-commands active batteries every tick
 )
 
 type batteryPlanDirection int
@@ -48,15 +53,16 @@ type batteryControlPlan struct {
 	evExcluded float64 // W of EV charge power the battery must not cover (discharge only)
 	gridOffset float64 // grid setpoint offset the main loop steered toward (residualPower,
 	// or 0 below prioritySoc where the energy-balance formula ignores it)
-	total   float64 // currently commanded total power across entries
-	created time.Time
+	total     float64 // currently commanded total power across entries
+	created   time.Time
+	lastWrite time.Time // last time power commands were sent (heartbeat reference)
 
 	// previous fast tick readings for the meter consistency guard
 	lastGrid, lastBatt float64
 	lastValid          bool
 }
 
-// batteryFastLoop runs the 1s correction ticker until stopC closes.
+// batteryFastLoop runs the correction ticker until stopC closes.
 func (site *Site) batteryFastLoop(stopC chan struct{}) {
 	if site.gridMeter == nil {
 		return
@@ -92,6 +98,17 @@ func (site *Site) batteryFastTick() {
 		return
 	}
 
+	// Meter consistency guard rule 1 - stale grid register: the grid meter refreshes
+	// its registers slower than the fast loop ticks. An identical reading carries no
+	// new information; pairing it with a fresher battery reading would double-count
+	// the battery's ramping contribution. Checked before the battery reads so stale
+	// ticks cost a single TCP read.
+	firstTick := !plan.lastValid
+	if !firstTick && gridPower == plan.lastGrid {
+		site.batteryFastHeartbeat(plan)
+		return
+	}
+
 	// Measured battery power of the active set. Using measurements instead of the
 	// commanded total is essential: during inverter ramps the commanded value is not
 	// yet delivered, and integrating the still-visible grid error against it causes
@@ -106,24 +123,12 @@ func (site *Site) batteryFastTick() {
 		battPower += p
 	}
 
-	// Meter consistency guard, two rules:
-	//
-	// 1. Stale grid register: the grid meter refreshes its registers slower than the
-	//    fast loop ticks. An identical reading carries no new information — pairing it
-	//    with a fresher battery reading makes the energy balance double-count the
-	//    battery's ramping contribution. Only correct on fresh grid samples.
-	//
-	// 2. Sampling skew: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When
-	//    the battery reading moved substantially without the grid reflecting it, the
-	//    registers are out of sync — skip and let them align. Genuine load steps
-	//    (Δbattery ≈ 0) are never skipped.
+	// Meter consistency guard rule 2 - sampling skew: with constant load,
+	// Δgrid + Δbattery ≈ 0 between ticks. When the battery reading moved substantially
+	// without the grid reflecting it, the registers are out of sync - skip and let
+	// them align. Genuine load steps (Δbattery ≈ 0) are never skipped.
 	dGrid, dBatt := gridPower-plan.lastGrid, battPower-plan.lastBatt
-	firstTick := !plan.lastValid
-	gridStale := !firstTick && gridPower == plan.lastGrid
 	plan.lastGrid, plan.lastBatt, plan.lastValid = gridPower, battPower, true
-	if gridStale {
-		return
-	}
 	if !firstTick && math.Abs(dBatt) > fastLoopSkewThreshold && math.Abs(dGrid+dBatt) > fastLoopSkewThreshold {
 		site.log.DEBUG.Printf("solar power (fast): meters inconsistent (Δgrid %.0fW, Δbattery %.0fW), skipping tick", dGrid, dBatt)
 		return
@@ -143,33 +148,67 @@ func (site *Site) batteryFastTick() {
 	target = math.Max(plan.total+fastLoopGain*(target-plan.total), 0)
 
 	if math.Abs(target-plan.total) < fastLoopMinDelta {
+		site.batteryFastHeartbeat(plan)
 		return
 	}
 
-	share := target / float64(len(plan.entries))
-
-	var commanded float64
-	for _, e := range plan.entries {
-		p := share
-		if e.cap > 0 && p > e.cap {
-			p = e.cap
-		}
-
-		if plan.direction == batteryPlanCharge {
-			err = e.ctrl.SetBatteryChargePower(p)
-		} else {
-			err = e.ctrl.SetBatteryDischargePower(p)
-		}
-		if err != nil {
-			site.log.ERROR.Printf("solar power (fast): %s: %v", e.name, err)
-			continue
-		}
-
-		commanded += p
-	}
+	commanded := site.batteryFastSend(plan, target)
 
 	dir := map[batteryPlanDirection]string{batteryPlanCharge: "charge", batteryPlanDischarge: "discharge"}[plan.direction]
 	site.log.DEBUG.Printf("solar power (fast): %s %.0fW → %.0fW (grid %.0fW, battery %.0fW)", dir, plan.total, commanded, gridPower, battPower)
 
 	plan.total = commanded
+}
+
+// batteryFastHeartbeat re-sends the current setpoints when no power command was
+// written for fastLoopHeartbeat, keeping the inverters' RS485 watchdog alive.
+// Called from skip paths; caller holds batteryPlanMu.
+func (site *Site) batteryFastHeartbeat(plan *batteryControlPlan) {
+	if time.Since(plan.lastWrite) < fastLoopHeartbeat {
+		return
+	}
+	site.batteryFastSend(plan, plan.total)
+	site.log.DEBUG.Printf("solar power (fast): heartbeat %.0fW", plan.total)
+}
+
+// batteryFastSend distributes target equally across the plan's entries, clamps to the
+// per-battery cap and writes the power commands in parallel (each battery has its own
+// Modbus connection). Returns the total actually commanded. Caller holds batteryPlanMu.
+func (site *Site) batteryFastSend(plan *batteryControlPlan, target float64) float64 {
+	share := target / float64(len(plan.entries))
+
+	powers := make([]float64, len(plan.entries))
+	var wg sync.WaitGroup
+	for i, e := range plan.entries {
+		p := share
+		if e.cap > 0 && p > e.cap {
+			p = e.cap
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			var err error
+			if plan.direction == batteryPlanCharge {
+				err = e.ctrl.SetBatteryChargePower(p)
+			} else {
+				err = e.ctrl.SetBatteryDischargePower(p)
+			}
+			if err != nil {
+				site.log.ERROR.Printf("solar power (fast): %s: %v", e.name, err)
+				return
+			}
+			powers[i] = p
+		}()
+	}
+	wg.Wait()
+
+	var commanded float64
+	for _, p := range powers {
+		commanded += p
+	}
+
+	plan.lastWrite = time.Now()
+	return commanded
 }

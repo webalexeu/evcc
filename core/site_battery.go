@@ -162,11 +162,35 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 	// first fast tick after the plan swap is guarded as well
 	plan := &batteryControlPlan{
 		created:   time.Now(),
+		lastWrite: time.Now(),
 		lastGrid:  site.gridPower,
 		lastBatt:  site.battery.Power,
 		lastValid: true,
 	}
-	defer func() { site.batteryPlan = plan }()
+	var planWrote bool
+	defer func() {
+		// carry the heartbeat reference over plan swaps when this tick didn't write
+		if old := site.batteryPlan; old != nil && !planWrote && plan.direction == old.direction {
+			plan.lastWrite = old.lastWrite
+		}
+		site.batteryPlan = plan
+		site.batteryLastDirection = plan.direction
+	}()
+
+	// Single-writer: while the fast loop is active it owns the power values of
+	// already-active batteries. The main loop only issues power commands on
+	// activation (battery was stopped), direction change, or swap handling -
+	// re-commanding steady-state batteries from the main loop's meter snapshot
+	// injects sampling-skew phantoms that the fast loop then has to correct.
+	fastLoopActive := site.gridMeter != nil
+
+	// measured per-battery power for seeding plan.total of write-skipped batteries
+	devPower := make(map[string]float64, len(site.batteryMeters))
+	if len(site.battery.Devices) == len(site.batteryMeters) {
+		for i, dev := range site.batteryMeters {
+			devPower[dev.Config().Name] = site.battery.Devices[i].Power
+		}
+	}
 
 	var evPower float64
 	for _, lp := range site.loadpoints {
@@ -444,14 +468,27 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				}
 			}
 
-			delete(site.batteryStopped, e.dev.Config().Name)
+			name := e.dev.Config().Name
+			_, wasStopped := site.batteryStopped[name]
+			isSwapIn := hasChargeSwap && name == chargeSwapIn.dev.Config().Name
+			delete(site.batteryStopped, name)
+
+			if fastLoopActive && !wasStopped && !isSwapIn && site.batteryLastDirection == batteryPlanCharge {
+				// already active in the same direction: the fast loop owns the power
+				// value; seed the plan total from the measured power instead
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), name, capW * taper})
+				plan.total += math.Max(0, -devPower[name])
+				continue
+			}
+
 			if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
 				site.log.ERROR.Printf("battery charge power: %v", err)
-				if hasChargeSwap && e.dev.Config().Name == chargeSwapIn.dev.Config().Name {
+				if isSwapIn {
 					chargeSwapInFailed = true
 				}
 			} else {
-				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW * taper})
+				planWrote = true
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), name, capW * taper})
 				plan.total += chargePower
 			}
 		}
@@ -471,6 +508,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				delete(site.batteryStopped, chargeSwapOut.dev.Config().Name)
 				if err := chargeSwapOut.ctrl.SetBatteryChargePower(share); err != nil {
 					site.log.ERROR.Printf("battery charge power fallback: %v", err)
+				} else {
+					planWrote = true
 				}
 			} else {
 				deferStop = append(deferStop, chargeSwapOut)
@@ -638,14 +677,27 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				}
 			}
 
-			delete(site.batteryStopped, e.dev.Config().Name)
+			name := e.dev.Config().Name
+			_, wasStopped := site.batteryStopped[name]
+			isSwapIn := hasDischargeSwap && name == dischargeSwapIn.dev.Config().Name
+			delete(site.batteryStopped, name)
+
+			if fastLoopActive && !wasStopped && !isSwapIn && site.batteryLastDirection == batteryPlanDischarge {
+				// already active in the same direction: the fast loop owns the power
+				// value; seed the plan total from the measured power instead
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), name, capW})
+				plan.total += math.Max(0, devPower[name])
+				continue
+			}
+
 			if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
 				site.log.ERROR.Printf("battery discharge power: %v", err)
-				if hasDischargeSwap && e.dev.Config().Name == dischargeSwapIn.dev.Config().Name {
+				if isSwapIn {
 					dischargeSwapInFailed = true
 				}
 			} else {
-				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
+				planWrote = true
+				plan.entries = append(plan.entries, batteryPlanEntry{e.ctrl, e.dev.Instance(), name, capW})
 				plan.total += dischargePower
 			}
 		}
@@ -662,6 +714,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			delete(site.batteryStopped, dischargeSwapOut.dev.Config().Name)
 			if err := dischargeSwapOut.ctrl.SetBatteryDischargePower(share); err != nil {
 				site.log.ERROR.Printf("battery discharge power fallback: %v", err)
+			} else {
+				planWrote = true
 			}
 		}
 		// On successful swap the outgoing battery is intentionally NOT stopped this tick:

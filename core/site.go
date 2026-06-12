@@ -92,8 +92,9 @@ type Site struct {
 	batteryChargeActive     []string // sticky selection: names of batteries currently in the charge tier
 	batteryDischargeActive  []string // sticky selection: names of batteries currently in the discharge tier
 	batteryStopped          map[string]int // ticks since stop was last sent per battery; skips redundant re-stops
-	batteryPlanMu           sync.Mutex          // guards batteryPlan and serializes main loop battery section vs fast loop
-	batteryPlan             *batteryControlPlan // contract between main loop (writes) and fast loop (adjusts)
+	batteryPlanMu           sync.Mutex           // guards batteryPlan and serializes main loop battery section vs fast loop
+	batteryPlan             *batteryControlPlan  // contract between main loop (writes) and fast loop (adjusts)
+	batteryLastDirection    batteryPlanDirection // direction of the previous solar control tick; direction changes force fresh power commands
 
 	// optimizer settings
 	optimizerChargingStrategy string // optimizer grid charging strategy

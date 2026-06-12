@@ -252,11 +252,15 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 | Tiering / sticky / swaps | ✔ | — |
 | Stop commands / mode writes | ✔ | — |
 | SoC reads / taper | ✔ | — |
-| Power re-scaling vs live grid | baseline | ✔ every 1s |
+| Power commands | only on activation, direction change, swap | ✔ owns steady state, every 500ms tick |
+
+**Single-writer principle**: while the fast loop is active (grid meter present), the main loop does **not** re-command power to batteries that are already active in the same direction — its meter snapshot suffers the same sampling skew as any other reading, and re-commanding from it injects phantom values that the fast loop then has to correct. The main loop issues power commands only when a battery joins the active set (was stopped), on direction change, or during swap handling (where the Modbus ACK check drives the safe-handoff logic). A 10s heartbeat in the fast loop re-sends the current setpoints when no write happened, keeping the inverters' RS485 watchdog alive.
 
 **Contract**: the main loop publishes a `batteryControlPlan` snapshot (direction, active entries with effective power caps, EV-excluded power, commanded total) at the end of every `applyBatterySolarPower` run. Both sides synchronize on `batteryPlanMu`, which also serializes the entire main-loop battery section against fast-loop ticks — no stale-plan write can re-activate a stopped battery.
 
-**Correction math** (grid meter read + one power read per active battery per tick):
+**Tick structure** (500ms period): the grid register is read first; if its value is identical to the previous tick (stale register — the meter refreshes every ~2-3s), the tick ends after that single cheap read. Battery power reads and the correction only run on fresh grid samples, so the fast tick rate costs almost nothing on the Modbus bus. Power writes to multiple active batteries go out **in parallel** (each battery has its own connection), so multi-battery tiers command as fast as a single unit.
+
+**Correction math** (grid meter read + one power read per active battery per fresh tick):
 - discharge: `target = batteryMeasured + gridPower + gridOffset − evExcluded`
 - charge: `target = −batteryMeasured − (gridPower + gridOffset)`
 - `gridOffset` is the grid setpoint the main loop steered toward (residualPower, or 0 below prioritySoc)
