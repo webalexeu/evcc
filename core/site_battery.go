@@ -304,6 +304,9 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		// stops are deferred until after the active batteries received their commands,
 		// keeping the Modbus writes for inactive batteries off the critical path
 		var deferStop []entry
+		// eligible batteries excluded from the current tier; published as fast-loop
+		// standby so it can engage them on saturation (tier-up)
+		var standby []entry
 		for _, e := range all {
 			soc, ok := deviceSoc(e.dev)
 			if !site.batteryCalibrationCharge {
@@ -391,10 +394,12 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							for _, c := range cand {
 								if c.dev.Config().Name != chargeSwapOut.dev.Config().Name {
 									deferStop = append(deferStop, c)
+									standby = append(standby, c)
 								}
 							}
 						} else {
 							deferStop = append(deferStop, cand...)
+							standby = append(standby, cand...)
 						}
 						active = sel
 					} else {
@@ -405,6 +410,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							return si < sj
 						})
 						deferStop = append(deferStop, active[needed:]...)
+						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
 					site.log.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat rated", needed, len(all)-len(full), surplus, maxChargePerBat)
@@ -515,6 +521,24 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				deferStop = append(deferStop, chargeSwapOut)
 			}
 		}
+		// publish standby candidates (lowest SoC engaged first) for fast-loop tier-up;
+		// skipped on swap ticks where the plan stays idle
+		if !hasChargeSwap && len(standby) > 0 {
+			sort.Slice(standby, func(i, j int) bool {
+				si, _ := deviceSoc(standby[i].dev)
+				sj, _ := deviceSoc(standby[j].dev)
+				return si < sj
+			})
+			for _, e := range standby {
+				var capW float64
+				if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+					if c, _ := limiter.GetPowerLimits(); c > 0 {
+						capW = c
+					}
+				}
+				plan.standby = append(plan.standby, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
+			}
+		}
 		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 		stopAll(deferStop)
 
@@ -539,6 +563,9 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		// stops are deferred until after the active batteries received their commands,
 		// keeping the Modbus writes for inactive batteries off the critical path
 		var deferStop []entry
+		// eligible batteries excluded from the current tier; published as fast-loop
+		// standby so it can engage them on saturation (tier-up)
+		var standby []entry
 		for _, e := range all {
 			soc, ok := deviceSoc(e.dev)
 			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok && hasLimiter {
@@ -620,10 +647,12 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							for _, c := range cand {
 								if c.dev.Config().Name != dischargeSwapOut.dev.Config().Name {
 									deferStop = append(deferStop, c)
+									standby = append(standby, c)
 								}
 							}
 						} else {
 							deferStop = append(deferStop, cand...)
+							standby = append(standby, cand...)
 						}
 						active = sel
 					} else {
@@ -633,6 +662,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							return si > sj
 						})
 						deferStop = append(deferStop, active[needed:]...)
+						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
 					site.log.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat rated", needed, len(all)-len(empty), dischargeTarget, maxDischargePerBat)
@@ -723,6 +753,24 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		// on the next tick via the regular non-selected path. The brief overlap exports to
 		// grid (safe); stopping immediately would import during the ramp. Charge swaps do
 		// the opposite (stop immediately) since there the gap exports and overlap imports.
+		// publish standby candidates (highest SoC engaged first) for fast-loop tier-up;
+		// skipped on swap ticks where the plan stays idle
+		if !hasDischargeSwap && len(standby) > 0 {
+			sort.Slice(standby, func(i, j int) bool {
+				si, _ := deviceSoc(standby[i].dev)
+				sj, _ := deviceSoc(standby[j].dev)
+				return si > sj
+			})
+			for _, e := range standby {
+				var capW float64
+				if limiter, ok := api.Cap[api.BatteryPowerLimiter](e.dev.Instance()); ok {
+					if _, d := limiter.GetPowerLimits(); d > 0 {
+						capW = d
+					}
+				}
+				plan.standby = append(plan.standby, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
+			}
+		}
 		site.log.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 		stopAll(deferStop)
 

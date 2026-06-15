@@ -27,6 +27,8 @@ const (
 	fastLoopHeartbeat     = 10 * time.Second // re-send the current setpoints when no write
 	// happened for this long, keeping the inverters' RS485 watchdog alive now that the
 	// main loop no longer re-commands active batteries every tick
+	fastLoopTierMargin = 50.0 // W of unmet demand beyond engaged capacity before the
+	// fast loop engages another battery (Marstek minimum effective power)
 )
 
 type batteryPlanDirection int
@@ -48,8 +50,10 @@ type batteryPlanEntry struct {
 // The main loop replaces it on every tick; the fast loop adjusts total between ticks.
 // Both access it under batteryPlanMu.
 type batteryControlPlan struct {
-	direction  batteryPlanDirection
-	entries    []batteryPlanEntry
+	direction batteryPlanDirection
+	entries   []batteryPlanEntry
+	standby   []batteryPlanEntry // eligible batteries beyond the current tier, in engage
+	// order; the fast loop turns them on (tier-up) when the engaged set saturates
 	evExcluded float64 // W of EV charge power the battery must not cover (discharge only)
 	gridOffset float64 // grid setpoint offset the main loop steered toward (residualPower,
 	// or 0 below prioritySoc where the energy-balance formula ignores it)
@@ -147,7 +151,13 @@ func (site *Site) batteryFastTick() {
 	}
 	target = math.Max(plan.total+fastLoopGain*(target-plan.total), 0)
 
-	if math.Abs(target-plan.total) < fastLoopMinDelta {
+	// Tier-up: when the engaged set is saturated (target exceeds its total capacity)
+	// and an eligible standby battery is available, engage the next one. The main loop
+	// owns tier-down via computeTier hysteresis, so the fast loop only ever expands -
+	// no flapping. Selection and order stay in the main loop (the standby list).
+	engaged := site.batteryFastTierUp(plan, target)
+
+	if !engaged && math.Abs(target-plan.total) < fastLoopMinDelta {
 		site.batteryFastHeartbeat(plan)
 		return
 	}
@@ -169,6 +179,46 @@ func (site *Site) batteryFastHeartbeat(plan *batteryControlPlan) {
 	}
 	site.batteryFastSend(plan, plan.total)
 	site.log.DEBUG.Printf("solar power (fast): heartbeat %.0fW", plan.total)
+}
+
+// batteryFastTierUp engages the next standby battery when the engaged set is saturated.
+// Returns true if a battery was engaged. Caller holds batteryPlanMu. The shared tier and
+// active-name state is updated so the next main tick takes ownership coherently; the main
+// loop remains the sole authority for tier-down and selection.
+func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target float64) bool {
+	if len(plan.standby) == 0 {
+		return false
+	}
+
+	// saturation is only well-defined when every engaged battery has a known cap
+	var sumCaps float64
+	for _, e := range plan.entries {
+		if e.cap <= 0 {
+			return false
+		}
+		sumCaps += e.cap
+	}
+
+	if target <= sumCaps+fastLoopTierMargin {
+		return false
+	}
+
+	next := plan.standby[0]
+	plan.standby = plan.standby[1:]
+	plan.entries = append(plan.entries, next)
+	delete(site.batteryStopped, next.name)
+
+	switch plan.direction {
+	case batteryPlanCharge:
+		site.batteryChargeActive = append(site.batteryChargeActive, next.name)
+		site.batteryChargeTier = len(plan.entries)
+	case batteryPlanDischarge:
+		site.batteryDischargeActive = append(site.batteryDischargeActive, next.name)
+		site.batteryDischargeTier = len(plan.entries)
+	}
+
+	site.log.DEBUG.Printf("solar power (fast): tier up, engaging %s (target %.0fW > %.0fW capacity)", next.name, target, sumCaps)
+	return true
 }
 
 // batteryFastSend distributes target equally across the plan's entries, clamps to the
