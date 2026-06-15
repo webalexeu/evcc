@@ -253,6 +253,8 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 | Stop commands / mode writes | ✔ | — |
 | SoC reads / taper | ✔ | — |
 | Power commands | only on activation, direction change, swap | ✔ owns steady state, every 500ms tick |
+| Tier-up (engage another battery) | baseline selection + ordering | ✔ engages a pre-selected standby on saturation |
+| Tier-down (release a battery) | ✔ owns it (computeTier hysteresis) | never |
 
 **Single-writer principle**: while the fast loop is active (grid meter present), the main loop does **not** re-command power to batteries that are already active in the same direction — its meter snapshot suffers the same sampling skew as any other reading, and re-commanding from it injects phantom values that the fast loop then has to correct. The main loop issues power commands only when a battery joins the active set (was stopped), on direction change, or during swap handling (where the Modbus ACK check drives the safe-handoff logic). A 10s heartbeat in the fast loop re-sends the current setpoints when no write happened, keeping the inverters' RS485 watchdog alive.
 
@@ -270,6 +272,8 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
   1. *Stale grid register*: a grid reading identical to the previous tick carries no new information (the meter refreshes slower than 1s) — the tick is skipped silently. Corrections only happen on fresh grid samples.
   2. *Sampling skew*: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When |Δbattery| > 100W while |Δgrid + Δbattery| > 100W, the registers are out of sync and the energy balance would double-count — the tick is skipped until they align.
   Genuine load steps (Δbattery ≈ 0, fresh grid) are never skipped, preserving one-tick reactivity. The guard history is seeded from the main loop's readings at plan creation, so the first fast tick after each main tick is guarded too.
+
+**Tier-up** (asymmetric, fast loop only expands): the main loop publishes the eligible batteries beyond the current tier as an ordered `standby` list (charge: lowest SoC first; discharge: highest SoC first), each with its power cap. When the engaged set saturates — target exceeds Σ caps by more than `fastLoopTierMargin` (50W) — the fast loop engages the next standby battery: commands it, clears its stop bookkeeping, appends it to the active-name list and bumps `batteryChargeTier`/`batteryDischargeTier` so the next main tick takes ownership coherently. Tier-*down* is never done by the fast loop; the main loop's `computeTier` hysteresis owns it (releasing a battery has no grid impact, so main cadence is fine). This asymmetry needs no hysteresis in the fast loop — saturation is a one-way trigger, so no flapping. Selection and ordering stay entirely in the main loop. Tier-up only runs on fresh, consistent ticks (it sits after the meter guards).
 
 **Safety rules**:
 - Direction flips are never done by the fast loop — corrections clamp at 0 and wait for the main loop
