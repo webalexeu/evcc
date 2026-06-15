@@ -252,7 +252,7 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 | Tiering / sticky / swaps | ✔ | — |
 | Stop commands / mode writes | ✔ | — |
 | SoC reads / taper | ✔ | — |
-| Power commands | only on activation, direction change, swap | ✔ owns steady state, every 500ms tick |
+| Power commands | only on activation, direction change, swap | ✔ owns steady state, every 1s tick |
 | Tier-up (engage another battery) | baseline selection + ordering | ✔ engages a pre-selected standby on saturation |
 | Tier-down (release a battery) | ✔ owns it (computeTier hysteresis) | never |
 
@@ -260,14 +260,14 @@ A dedicated 1s loop (`core/site_battery_fast.go`) closes the reaction gap betwee
 
 **Contract**: the main loop publishes a `batteryControlPlan` snapshot (direction, active entries with effective power caps, EV-excluded power, commanded total) at the end of every `applyBatterySolarPower` run. Both sides synchronize on `batteryPlanMu`, which also serializes the entire main-loop battery section against fast-loop ticks — no stale-plan write can re-activate a stopped battery.
 
-**Tick structure** (500ms period): the grid register is read first; if its value is identical to the previous tick (stale register — the meter refreshes every ~2-3s), the tick ends after that single cheap read. Battery power reads and the correction only run on fresh grid samples, so the fast tick rate costs almost nothing on the Modbus bus. Power writes to multiple active batteries go out **in parallel** (each battery has its own connection), so multi-battery tiers command as fast as a single unit.
+**Tick structure** (1s period, matched to the DSMR P1 grid telegram cadence): the grid register is read first; if its value is identical to the previous tick (stale register), the tick ends after that single cheap read. Ticking faster than the meter refreshes only re-chews stale samples and feeds stale-read overshoot into the gain-1.0 correction, so the period is aligned to the meter. Battery power reads and the correction only run on fresh grid samples, so the fast tick costs almost nothing on the Modbus bus. Power writes to multiple active batteries go out **in parallel** (each battery has its own connection), so multi-battery tiers command as fast as a single unit.
 
 **Correction math** (grid meter read + one power read per active battery per fresh tick):
 - discharge: `target = batteryMeasured + gridPower + gridOffset − evExcluded`
 - charge: `target = −batteryMeasured − (gridPower + gridOffset)`
 - `gridOffset` is the grid setpoint the main loop steered toward (residualPower, or 0 below prioritySoc)
 - The target is an **absolute energy balance from measurements**, not an increment on the commanded value. This is essential: during inverter ramps the commanded power is not yet delivered, and integrating the still-visible grid error against the commanded total double-counts it and produces full-scale oscillation (observed in practice). The measured form is ramp-state invariant.
-- applied at full gain (1.0) for one-tick reaction; clamped to `[0, cap]` per battery; corrections < 10W are skipped
+- applied at full gain (1.0) for one-tick reaction; clamped to `[0, cap]` per battery; corrections < 10W are skipped. Gain 1.0 is kept deliberately for reactivity; near the charge/discharge zero-crossing with a heavily phase-imbalanced grid total (single-phase battery on a 3-phase meter) it can ring — the preferred remedy is a near-zero deadband (raise the 10W skip threshold) rather than lowering the gain, so real changes still get a full one-tick correction
 - **Meter consistency guard**, two rules evaluated per tick:
   1. *Stale grid register*: a grid reading identical to the previous tick carries no new information (the meter refreshes slower than 1s) — the tick is skipped silently. Corrections only happen on fresh grid samples.
   2. *Sampling skew*: with constant load, Δgrid + Δbattery ≈ 0 between ticks. When |Δbattery| > 100W while |Δgrid + Δbattery| > 100W, the registers are out of sync and the energy balance would double-count — the tick is skipped until they align.
