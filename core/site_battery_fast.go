@@ -17,14 +17,14 @@ import (
 // the main loop to decide.
 const (
 	batteryFastLoopPeriod = 1 * time.Second // matched to the (DSMR P1) grid telegram cadence;
-	// ticking faster than the meter refreshes only re-chews stale samples and over-commands
+	// ticking faster than the meter refreshes only re-chews stale samples - every tick now reads
+	// a fresh telegram, which also removes the stale-read overshoot that gain 1.0 used to amplify
 	batteryPlanMaxAge = 30 * time.Second // ignore plans when the main loop stopped updating them
 	fastLoopMinDelta  = 10.0             // W; skip Modbus writes below the grid meter noise floor
-	fastLoopGain      = 0.5              // fraction of the measured error corrected per tick.
-	// The target is absolute (no integration), but the inverter ramps over 3-4s while the load
-	// (and phase-imbalanced grid total) can swing faster - a full 1.0 correction overshoots and
-	// rings near the charge/discharge zero-crossing. 0.5 keeps reactivity with stability margin;
-	// gross sampling skew is still handled by the consistency guard below
+	fastLoopGain      = 1.0              // full one-tick correction toward the measured target.
+	// Kept aggressive for reactivity; the target is absolute (no integration) and gross sampling
+	// skew is handled by the consistency guard below. If near-zero/phase-imbalance ringing returns,
+	// prefer a near-zero deadband (raise fastLoopMinDelta) over lowering the gain
 	fastLoopSkewThreshold = 100.0            // W; see meter consistency guard in batteryFastTick
 	fastLoopHeartbeat     = 10 * time.Second // re-send the current setpoints when no write
 	// happened for this long, keeping the inverters' RS485 watchdog alive now that the
