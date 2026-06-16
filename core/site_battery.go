@@ -20,6 +20,13 @@ const (
 	chargeTaperRange = 5.0  // begin tapering this many % below maxSoc
 	chargeMinFactor  = 0.25 // taper down to 25% of requested power at maxSoc
 	stopRefreshTicks = 10   // re-send stop to an already-stopped battery every N ticks (watchdog heartbeat)
+	// batteryTierFraction sizes the tier count off a fraction of each battery's rated
+	// charge/discharge power rather than the full rating, so load spreads onto more units
+	// earlier (e.g. 2000W onto 2 of 3 at 50%). Spreading covers more phases (single-phase
+	// inverters) and runs each unit at a more efficient partial load; the cost is each extra
+	// inverter's standby draw. The per-battery power cap stays the full rating, so a unit can
+	// still ramp to its limit when others drop out.
+	batteryTierFraction = 0.5
 )
 
 // computeTier returns the number of batteries to activate given the current power target,
@@ -339,7 +346,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 
 			if maxChargePerBat > 0 && site.batterySolarTiering {
-				site.batteryChargeTier = computeTier(surplus, maxChargePerBat, site.batteryChargeTier, len(active))
+				tierPerBat := maxChargePerBat * batteryTierFraction
+				site.batteryChargeTier = computeTier(surplus, tierPerBat, site.batteryChargeTier, len(active))
 				needed := site.batteryChargeTier
 
 				if needed < len(active) {
@@ -413,7 +421,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
-					site.log.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat rated", needed, len(all)-len(full), surplus, maxChargePerBat)
+					site.log.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(full), surplus, tierPerBat, maxChargePerBat)
 				} else {
 					site.batteryChargeActive = nil
 				}
@@ -593,7 +601,8 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 
 			if maxDischargePerBat > 0 && site.batterySolarTiering {
-				site.batteryDischargeTier = computeTier(dischargeTarget, maxDischargePerBat, site.batteryDischargeTier, len(active))
+				tierPerBat := maxDischargePerBat * batteryTierFraction
+				site.batteryDischargeTier = computeTier(dischargeTarget, tierPerBat, site.batteryDischargeTier, len(active))
 				needed := site.batteryDischargeTier
 
 				if needed < len(active) {
@@ -665,7 +674,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
-					site.log.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat rated", needed, len(all)-len(empty), dischargeTarget, maxDischargePerBat)
+					site.log.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(empty), dischargeTarget, tierPerBat, maxDischargePerBat)
 				} else {
 					site.batteryDischargeActive = nil
 				}

@@ -79,27 +79,27 @@ An additional threshold on top of `standbyPower` (10W) before the system starts 
 
 ## 5. Tiered Activation (`computeTier`)
 
-Uses the minimum number of batteries needed to handle the target power without each unit operating at a fraction of its rated capacity. Concentrating load avoids sub-threshold commands that inverters silently ignore and keeps each unit at a more efficient operating point.
+Engages enough batteries to handle the target power while avoiding sub-threshold per-unit commands that inverters silently ignore (e.g. Marstek <50W). The tier *count* is sized off a **fraction of each battery's rated power** — `batteryTierFraction = 0.5` (`site_battery.go`) — not the full rating:
 
-### Tier boundaries (example: 3 × Marstek 2000W charge / 800W discharge)
+```
+tierCount = ceil(target / (batteryTierFraction × ratedPerBat))   # clamped [1, nBatteries]
+```
 
-**Charging:**
-| Tier | Batteries active | Surplus range |
+Sizing on 50% of the rating spreads load onto more units earlier. This is deliberate: with single-phase inverters it puts power on **more phases** (helps phase balance), and each unit runs at a more efficient **partial load**; the trade-off is each extra inverter's standby draw. Very low power still lands on tier 1, so it never over-splits into ignored sub-50W commands. The **per-battery power cap stays the full rating** (`GetPowerLimits`), so a unit can still ramp to its limit when others drop out.
+
+### Tier boundaries (example: 3 × 2500W rated, `batteryTierFraction = 0.5` → 1250W tier target)
+
+| Tier | Batteries active | Target range |
 |------|-----------------|--------------|
-| 1 | 1 | 0 – 2000W |
-| 2 | 2 | 2000 – 4000W |
-| 3 | 3 | > 4000W |
+| 1 | 1 | 0 – 1250W |
+| 2 | 2 | 1250 – 2500W |
+| 3 | 3 | > 2500W |
 
-**Discharging:**
-| Tier | Batteries active | Deficit range |
-|------|-----------------|--------------|
-| 1 | 1 | 0 – 800W |
-| 2 | 2 | 800 – 1600W |
-| 3 | 3 | > 1600W |
+(So a 2000W target engages 2 units at ~1000W each, rather than one unit at 2000W.)
 
 ### Hysteresis (15% dead band)
 
-To prevent rapid tier switching when power hovers near a boundary:
+To prevent rapid tier switching when power hovers near a boundary (boundaries scale with the tier target, i.e. `batteryTierFraction × ratedPerBat`):
 - **Switch up**: only when target > current-tier capacity × 1.15
 - **Switch down**: only when target < previous-tier capacity × 0.85
 - **Large jump (> 1 tier)**: responds immediately without dead band
