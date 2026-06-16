@@ -220,7 +220,15 @@ func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target, measured f
 	// the persisting grid error (target ≈ measured + grid), so target − measured is the
 	// undelivered watts. A dwell longer than the inverter ramp keeps normal ramp-up from
 	// tripping it (and shortfallTicks is reset on engage so a freshly-engaged unit can ramp).
-	if target-measured > fastLoopShortfall {
+	// measured battery power is signed (negative = charging); convert to the delivered
+	// magnitude in the active direction so the shortfall is correct for charge too -
+	// otherwise target − measured is always large positive while charging and the trigger
+	// fires every tick even when the battery is over-delivering.
+	delivered := measured
+	if plan.direction == batteryPlanCharge {
+		delivered = -measured
+	}
+	if target-delivered > fastLoopShortfall {
 		plan.shortfallTicks++
 	} else {
 		plan.shortfallTicks = 0
@@ -250,7 +258,7 @@ func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target, measured f
 	if starved {
 		reason = "under-delivering"
 	}
-	site.log.DEBUG.Printf("solar power (fast): tier up (%s), engaging %s (target %.0fW, delivered %.0fW, capacity %.0fW)", reason, next.name, target, measured, sumCaps)
+	site.log.DEBUG.Printf("solar power (fast): tier up (%s), engaging %s (target %.0fW, delivered %.0fW, capacity %.0fW)", reason, next.name, target, delivered, sumCaps)
 	return true
 }
 
