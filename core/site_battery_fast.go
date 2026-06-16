@@ -31,6 +31,10 @@ const (
 	// main loop no longer re-commands active batteries every tick
 	fastLoopTierMargin = 50.0 // W of unmet demand beyond engaged capacity before the
 	// fast loop engages another battery (Marstek minimum effective power)
+	fastLoopShortfall     = 150.0 // W; engaged set delivering at least this far below the
+	// commanded total counts as under-delivery (a unit ACKs but can't physically deliver)
+	fastLoopShortfallDwell = 4 // consecutive under-delivering ticks (≈4s at 1s tick, longer
+	// than the inverter ramp) before engaging a standby, so normal ramp-up doesn't trip it
 )
 
 type batteryPlanDirection int
@@ -66,6 +70,10 @@ type batteryControlPlan struct {
 	// previous fast tick readings for the meter consistency guard
 	lastGrid, lastBatt float64
 	lastValid          bool
+
+	// consecutive ticks the engaged set delivered materially less than commanded
+	// (ACKed but under-delivering); drives tier-up onto a standby battery
+	shortfallTicks int
 }
 
 // batteryFastLoop runs the correction ticker until stopC closes.
@@ -157,7 +165,7 @@ func (site *Site) batteryFastTick() {
 	// and an eligible standby battery is available, engage the next one. The main loop
 	// owns tier-down via computeTier hysteresis, so the fast loop only ever expands -
 	// no flapping. Selection and order stay in the main loop (the standby list).
-	engaged := site.batteryFastTierUp(plan, target)
+	engaged := site.batteryFastTierUp(plan, target, battPower)
 
 	if !engaged && math.Abs(target-plan.total) < fastLoopMinDelta {
 		site.batteryFastHeartbeat(plan)
@@ -187,8 +195,9 @@ func (site *Site) batteryFastHeartbeat(plan *batteryControlPlan) {
 // Returns true if a battery was engaged. Caller holds batteryPlanMu. The shared tier and
 // active-name state is updated so the next main tick takes ownership coherently; the main
 // loop remains the sole authority for tier-down and selection.
-func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target float64) bool {
+func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target, measured float64) bool {
 	if len(plan.standby) == 0 {
+		plan.shortfallTicks = 0
 		return false
 	}
 
@@ -196,12 +205,29 @@ func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target float64) bo
 	var sumCaps float64
 	for _, e := range plan.entries {
 		if e.cap <= 0 {
+			plan.shortfallTicks = 0
 			return false
 		}
 		sumCaps += e.cap
 	}
 
-	if target <= sumCaps+fastLoopTierMargin {
+	// (1) cap saturation: the commanded target exceeds the engaged set's rated capacity.
+	saturated := target > sumCaps+fastLoopTierMargin
+
+	// (2) under-delivery: the engaged set ACKs the command (no Modbus error) but cannot
+	// physically deliver it - a faulted, low-SoC-derated or phase-limited unit. The Modbus
+	// ACK can't reveal this; only the measured power can. The energy-balance target tracks
+	// the persisting grid error (target ≈ measured + grid), so target − measured is the
+	// undelivered watts. A dwell longer than the inverter ramp keeps normal ramp-up from
+	// tripping it (and shortfallTicks is reset on engage so a freshly-engaged unit can ramp).
+	if target-measured > fastLoopShortfall {
+		plan.shortfallTicks++
+	} else {
+		plan.shortfallTicks = 0
+	}
+	starved := plan.shortfallTicks >= fastLoopShortfallDwell
+
+	if !saturated && !starved {
 		return false
 	}
 
@@ -209,6 +235,7 @@ func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target float64) bo
 	plan.standby = plan.standby[1:]
 	plan.entries = append(plan.entries, next)
 	delete(site.batteryStopped, next.name)
+	plan.shortfallTicks = 0
 
 	switch plan.direction {
 	case batteryPlanCharge:
@@ -219,7 +246,11 @@ func (site *Site) batteryFastTierUp(plan *batteryControlPlan, target float64) bo
 		site.batteryDischargeTier = len(plan.entries)
 	}
 
-	site.log.DEBUG.Printf("solar power (fast): tier up, engaging %s (target %.0fW > %.0fW capacity)", next.name, target, sumCaps)
+	reason := "saturated"
+	if starved {
+		reason = "under-delivering"
+	}
+	site.log.DEBUG.Printf("solar power (fast): tier up (%s), engaging %s (target %.0fW, delivered %.0fW, capacity %.0fW)", reason, next.name, target, measured, sumCaps)
 	return true
 }
 
