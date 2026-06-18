@@ -206,7 +206,14 @@ In solar control mode, the tiered selection also filters out batteries that have
 
 ## 14. MinSoc Enforcement
 
-In the discharge case, batteries whose SoC is at or below their hardware `minSoc` (from `BatterySocLimiter`) are moved to the `empty` list and stopped. They are excluded from the active discharge tier.
+`minSoc` is a **hard discharge floor — enforced no matter what**. No battery discharges below its configured minimum under any meter, read, or control-state failure.
+
+In the discharge case, batteries whose SoC is at or below their `minSoc` (from `BatterySocLimiter`) are moved to the `empty` list and stopped, excluded from the active discharge tier.
+
+**Fail closed.** The floor check treats an *unknown* SoC the same as being at the floor:
+
+- If a battery's SoC read fails for a cycle, it is moved to `empty` and not discharged — a transient read glitch can never drain the pack below min. (Earlier behaviour failed *open*: an unreadable SoC let discharge continue, which could drain a pack to 0%.)
+- When the normal solar-control tick is skipped (e.g. site power unavailable), the loop no longer simply holds the last setpoints — which would keep a discharging battery running with no floor re-check. Instead `enforceBatteryMinSoc()` runs every such tick: for each battery it forces `SetBatteryDischargePower(0)` whenever SoC is at/below `minSoc` **or** cannot be read. Charging is left untouched so solar can still recover the pack.
 
 ---
 

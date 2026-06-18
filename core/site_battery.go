@@ -152,7 +152,43 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate,
 		if sitePowerValid {
 			site.applyBatterySolarPower(rate, sitePower)
 		} else {
+			// Holding the last setpoints would keep a discharging battery running
+			// with no min-soc re-check. Enforce the hard floor instead so a stuck
+			// meter read can never drain the pack below min.
 			site.log.DEBUG.Println("solar power: skipping tick, site power unavailable")
+			site.enforceBatteryMinSoc()
+		}
+	}
+}
+
+// enforceBatteryMinSoc is the hard discharge floor. It runs on every tick where
+// the normal solar control loop does not (e.g. site power unavailable),
+// guaranteeing that no battery discharges below its configured minimum soc
+// regardless of meter or read failures. Charging is left untouched so solar can
+// still recover the pack. SoC that cannot be read fails closed (discharge
+// stopped).
+func (site *Site) enforceBatteryMinSoc() {
+	for _, dev := range site.batteryMeters {
+		ctrl, ok := api.Cap[api.BatteryPowerController](dev.Instance())
+		if !ok {
+			continue
+		}
+
+		atFloor := true // fail closed: unknown soc → stop discharge
+		if bat, hasBat := api.Cap[api.Battery](dev.Instance()); hasBat {
+			if soc, err := bat.Soc(); err == nil {
+				var minSoc float64
+				if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](dev.Instance()); hasLimiter {
+					minSoc, _ = limiter.GetSocLimits()
+				}
+				atFloor = soc <= minSoc
+			}
+		}
+
+		if atFloor {
+			if err := ctrl.SetBatteryDischargePower(0); err != nil {
+				site.log.ERROR.Printf("battery min-soc floor: %v", err)
+			}
 		}
 	}
 }
@@ -576,7 +612,14 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		var standby []entry
 		for _, e := range all {
 			soc, ok := deviceSoc(e.dev)
-			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); ok && hasLimiter {
+			// Hard min-soc floor: never discharge below the configured minimum.
+			// Fail closed — if the SoC read failed this cycle, treat the battery as
+			// empty so a transient read glitch can never drain the pack below min.
+			if !ok {
+				empty = append(empty, e)
+				continue
+			}
+			if limiter, hasLimiter := api.Cap[api.BatterySocLimiter](e.dev.Instance()); hasLimiter {
 				if minSoc, _ := limiter.GetSocLimits(); soc <= minSoc {
 					empty = append(empty, e)
 					continue
