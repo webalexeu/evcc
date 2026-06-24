@@ -33,6 +33,9 @@ func NewConfigurableFromConfig(ctx context.Context, other map[string]any) (api.M
 		Soc                *plugin.Config // optional
 		LimitSoc           *plugin.Config // optional
 		BatteryMode        *plugin.Config // optional
+		ChargePower        *plugin.Config // optional: dynamic charge power setter (watts)
+		StopChargePower    *plugin.Config // optional: explicit stop-charge command
+		DischargePower     *plugin.Config // optional: dynamic discharge power setter (watts)
 	}{
 		batterySocLimits: batterySocLimits{
 			MinSoc: 20,
@@ -92,6 +95,51 @@ func NewConfigurableFromConfig(ctx context.Context, other map[string]any) (api.M
 				return modeS(int64(mode))
 			}))
 		}
+
+		// wire dynamic charge/discharge power control if configured
+		chargePowerS, err := cc.ChargePower.FloatSetter(ctx, "chargePower")
+		if err != nil {
+			return nil, fmt.Errorf("battery charge power: %w", err)
+		}
+
+		// optional explicit stop-charge command (replaces chargePower(0) on stop)
+		stopChargePowerS, err := cc.StopChargePower.FloatSetter(ctx, "stopChargePower")
+		if err != nil {
+			return nil, fmt.Errorf("battery stop charge power: %w", err)
+		}
+
+		// wrap chargePowerS to use stopChargePowerS when watts == 0
+		if chargePowerS != nil && stopChargePowerS != nil {
+			rawCharge := chargePowerS
+			chargePowerS = func(watts float64) error {
+				if watts == 0 {
+					return stopChargePowerS(0)
+				}
+				return rawCharge(watts)
+			}
+		}
+
+		dischargePowerS, err := cc.DischargePower.FloatSetter(ctx, "dischargePower")
+		if err != nil {
+			return nil, fmt.Errorf("battery discharge power: %w", err)
+		}
+
+		// discharge(0) delegates to stopChargePowerS so the device receives an
+		// explicit direction=Stop before the next charge command overwrites it.
+		if dischargePowerS != nil {
+			rawDischarge := dischargePowerS
+			dischargePowerS = func(watts float64) error {
+				if watts == 0 {
+					if stopChargePowerS != nil {
+						return stopChargePowerS(0)
+					}
+					return nil
+				}
+				return rawDischarge(watts)
+			}
+		}
+
+		implement.May(m, implement.BatteryPowerController(chargePowerS, dischargePowerS))
 
 		return m, nil
 	}
