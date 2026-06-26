@@ -184,9 +184,19 @@ Controls battery-supported EV charging:
 
 ## 11. Discharge Control (`batteryDischargeControl`)
 
-When enabled, prevents battery discharge during:
-- **Fast/planned charging**: car is connected (StatusB+) and fast charging is active — StatusC not required so phase-negotiation transitions don't momentarily re-enable discharge
-- **Smart cost active**: car is actually charging (StatusC) and the current tariff rate is below the smart cost limit
+When enabled, modifies battery discharge behaviour per-charger:
+
+- **Fast/planned charging** (car connected StatusB+, mode=Now or planActive or minSocNotReached): the power consumed by **those specific chargers** (`evPowerFast`) is excluded from the discharge target — grid covers their load. Other chargers not in fast/planned mode and house loads are still covered by the battery. StatusC is not required so phase-negotiation transitions don't momentarily re-enable this protection.
+- **Smart cost active**: car is actually charging (StatusC) and the current tariff rate is below the smart cost limit — full EV power excluded.
+
+**Key behaviour**: discharge control is independent of `bufferSoc`. When the toggle is on and a fast/planned charger is active, battery does not cover that charger's load regardless of SoC level. It only covers house loads and other (non-fast) EV chargers, which is independent of this flag.
+
+**Implementation** (`applyBatterySolarPower`, discharge path):
+1. `evPowerFast` = sum of `GetChargePower()` for all loadpoints where `GetStatus() != StatusA && IsFastChargingActive()`
+2. `evPower` = sum of all non-heating loadpoints (used for bufferSoc protection)
+3. When `dischargeControlActive`: `dischargeTarget -= evPowerFast`, fast loop gets `plan.evExcluded = evPowerFast`
+4. When `!batteryBufferedEv` (battery below bufferSoc, discharge control off): `dischargeTarget -= evPower`
+5. If `dischargeTarget <= standbyPower` after subtraction: stop all
 
 ---
 

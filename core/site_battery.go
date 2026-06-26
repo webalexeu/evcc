@@ -235,10 +235,14 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		}
 	}
 
-	var evPower float64
+	var evPower, evPowerFast float64
 	for _, lp := range site.loadpoints {
 		if !lp.IsHeating() {
-			evPower += lp.GetChargePower()
+			p := lp.GetChargePower()
+			evPower += p
+			if lp.GetStatus() != api.StatusA && lp.IsFastChargingActive() {
+				evPowerFast += p
+			}
 		}
 	}
 	// When battery has priority (soc below threshold), use the raw grid reading as the
@@ -587,12 +591,17 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		stopAll(deferStop)
 
 	case sitePower > threshold:
-		// Compute discharge target by subtracting EV power that the battery should NOT cover
-		// when battery SoC is below bufferSoc or discharge control is active.
+		// Compute discharge target by subtracting EV power the battery should NOT cover.
+		// When discharge control is active (toggle on + fast/planned charger), only fast-charging
+		// EV power is excluded — other chargers and house loads remain battery-covered.
+		// When battery SoC is below bufferSoc, all EV power is excluded regardless.
 		batteryBufferedEv := site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc
 		dischargeTarget := sitePower
 		var evExcluded float64
-		if !batteryBufferedEv || site.dischargeControlActive(rate) {
+		if site.dischargeControlActive(rate) {
+			dischargeTarget -= evPowerFast
+			evExcluded = evPowerFast
+		} else if !batteryBufferedEv {
 			dischargeTarget -= evPower
 			evExcluded = evPower
 		}
