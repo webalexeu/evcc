@@ -284,6 +284,10 @@ export interface State {
   batteryGridDischarge?: boolean;
   /** Solar forecast is adjusted to real production data (experimental). */
   solarAdjusted?: boolean;
+  batterySolarControl?: boolean;
+  batterySolarPool?: boolean;
+  batteryCalibrationCharge?: boolean;
+  batteryControlDeadBand?: number;
   /** Price or emission limit for charging the home battery from grid. */
   batteryGridChargeLimit?: number | null;
   /** Home battery is currently charged from grid. */

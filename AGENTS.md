@@ -30,16 +30,17 @@ This file provides guidance to AI coding agents when working with code in this r
 
 Deep documentation on specific subsystems is available in `docs/agents/`. Load what you need based on the task:
 
-| File                                                          | When to load                                                                 |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [Core Domain](docs/agents/core-domain.md)                     | Control loop, loadpoint logic, PV surplus, charge modes, tariffs, interfaces |
-| [Hardware Integrations](docs/agents/hardware-integrations.md) | Charger/meter/vehicle implementations, adding new devices                    |
-| [Easee Architecture](docs/agents/easee-architecture.md)       | Easee charger (REST+SignalR, async correlation, concurrency)                 |
-| [OCPP Forwarder](docs/agents/ocpp-forwarder.md)               | OCPP proxy/forwarder (sidecar relay to upstream OCPP server, read-only mode) |
-| [Plugin System](docs/agents/plugin-system.md)                 | Plugin layer (HTTP, MQTT, Modbus, SunSpec, JS)                               |
-| [Web UI & API](docs/agents/web-ui-api.md)                     | REST API, WebSocket, Vue frontend, authentication                            |
-| [API Security](docs/agents/api-security.md)                   | Auth modes, JWT/API key/session, two-tier checks, credential storage         |
-| [Chart Conventions](docs/agents/charts.md)                    | ECharts charts: axis units and scale rules, tooltips, layout                 |
+| File                                                          | When to load                                                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [Core Domain](docs/agents/core-domain.md)                     | Control loop, loadpoint logic, PV surplus, charge modes, tariffs, interfaces                     |
+| [Battery Management](docs/agents/battery-management.md)       | Multi-battery solar control (tiering, sticky selection, swaps, fast loop, modes, calibration)    |
+| [Hardware Integrations](docs/agents/hardware-integrations.md) | Charger/meter/vehicle implementations, adding new devices                                        |
+| [Easee Architecture](docs/agents/easee-architecture.md)       | Easee charger (REST+SignalR, async correlation, concurrency)                                     |
+| [OCPP Forwarder](docs/agents/ocpp-forwarder.md)               | OCPP proxy/forwarder (sidecar relay to upstream OCPP server, read-only mode)                     |
+| [Plugin System](docs/agents/plugin-system.md)                 | Plugin layer (HTTP, MQTT, Modbus, SunSpec, JS)                                                   |
+| [Web UI & API](docs/agents/web-ui-api.md)                     | REST API, WebSocket, Vue frontend, authentication                                                |
+| [API Security](docs/agents/api-security.md)                   | Auth modes, JWT/API key/session, two-tier checks, credential storage                             |
+| [Chart Conventions](docs/agents/charts.md)                    | ECharts charts: axis units and scale rules, tooltips, layout                                     |
 
 ### Loading guide by task type
 
