@@ -53,9 +53,10 @@ var _ site.API = (*Site)(nil)
 
 // Site is the main configuration container. A site can host multiple loadpoints.
 type Site struct {
-	valueChan    chan<- util.Param      // client push messages
-	pushChan     chan<- messenger.Event // notification events
-	lpUpdateChan chan *Loadpoint
+	valueChan         chan<- util.Param      // client push messages
+	pushChan          chan<- messenger.Event // notification events
+	lpUpdateChan      chan *Loadpoint
+	batteryReplanChan chan struct{} // fast loop requests an out-of-band battery re-decision (direction flip)
 
 	sync.RWMutex
 	log *util.Logger
@@ -134,6 +135,8 @@ type Site struct {
 	batterySuggestions       map[string]types.Suggestion // Optimizer suggestions by battery meter name
 	loadpointSuggestions     map[int]types.Suggestion    // Optimizer suggestions by loadpoint id
 	suggestionActions        map[string]string           // last notified actionable optimizer action by device key
+	lastFlexiblePower        float64                     // last PV-mode charge flexibility, reused by out-of-band battery replan
+	lastTotalChargePower     float64                     // last total loadpoint charge power, reused by out-of-band battery replan
 }
 
 // MetersConfig contains the site's meter configuration
@@ -1259,6 +1262,11 @@ func (site *Site) update(lp updater) {
 		site.log.WARN.Println("planner:", msg)
 	}
 
+	// cache loadpoint-derived scalars so an out-of-band battery replan can reuse them
+	// without re-running the loadpoint cycle (see replanBattery)
+	site.lastFlexiblePower = flexiblePower
+	site.lastTotalChargePower = totalChargePower
+
 	// update battery after reading meters to ensure that (modbus) connection is open
 	batteryGridChargeActive := site.batteryGridChargeActive(rate)
 	site.publish(keys.BatteryGridChargeActive, batteryGridChargeActive)
@@ -1268,6 +1276,31 @@ func (site *Site) update(lp updater) {
 	site.publishSuggestions()
 
 	site.stats.Update(site)
+}
+
+// replanBattery re-runs only the battery direction decision with fresh meter
+// readings, without re-running the loadpoint cycle. Triggered out-of-band by the
+// fast loop when it detects a charge<->discharge crossing, so a direction flip does
+// not wait for the next scheduled tick. Reuses the last loadpoint-derived scalars
+// (flexiblePower is irrelevant unless an EV charges in PV mode; totalChargePower is
+// unused when grid and PV meters are present). Runs in the Run goroutine, so it never
+// overlaps a scheduled update.
+func (site *Site) replanBattery() {
+	consumption, err := site.tariffRates(api.TariffUsagePlanner)
+	if err != nil {
+		site.log.WARN.Println("planner:", err)
+	}
+
+	sitePower, _, _, err := site.sitePower(site.lastTotalChargePower, site.lastFlexiblePower)
+	if err != nil {
+		site.log.ERROR.Println(err)
+		return
+	}
+
+	rate, _ := consumption.At(time.Now())
+	batteryGridChargeActive := site.batteryGridChargeActive(rate)
+	site.publish(keys.BatteryGridChargeActive, batteryGridChargeActive)
+	site.updateBatteryMode(batteryGridChargeActive, rate, sitePower, true)
 }
 
 // prepare publishes initial values
@@ -1350,7 +1383,8 @@ func (site *Site) Prepare(valueChan chan<- util.Param, pushChan chan<- messenger
 		}
 	}()
 
-	site.lpUpdateChan = make(chan *Loadpoint, 1) // 1 capacity to avoid deadlock
+	site.lpUpdateChan = make(chan *Loadpoint, 1)  // 1 capacity to avoid deadlock
+	site.batteryReplanChan = make(chan struct{}, 1) // 1 capacity; non-blocking send coalesces requests
 
 	site.prepare()
 
@@ -1425,6 +1459,8 @@ func (site *Site) Run(stopC chan struct{}, interval time.Duration) {
 			site.update(<-loadpointChan)
 		case lp := <-site.lpUpdateChan:
 			site.update(lp)
+		case <-site.batteryReplanChan:
+			site.replanBattery()
 		case <-stopC:
 			return
 		}
