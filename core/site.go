@@ -138,6 +138,7 @@ type Site struct {
 	batteryModeApplied       map[string]api.BatteryMode // Battery mode last applied per battery meter
 	lastFlexiblePower        float64                    // last PV-mode charge flexibility, reused by out-of-band battery replan
 	lastTotalChargePower     float64                    // last total loadpoint charge power, reused by out-of-band battery replan
+	lastBatteryFlipRequest   time.Time                  // last fast-loop flip poke; cooldown to bound direction thrash
 
 	optimizer optimizerState // optimizer runs, cached results and suggestions
 
