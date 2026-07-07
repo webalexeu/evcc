@@ -63,6 +63,15 @@
     }
   },
   "batterySettings": {
+    "batteryControl": "Actively control charge and discharge power based on solar production and home consumption.",
+    "batteryControlModePerBattery": "Smart selection",
+    "batteryControlModePerBatteryDesc": "Select active batteries based on state of charge and rated capacity.",
+    "batteryControlModePool": "Uniform distribution",
+    "batteryControlModePoolDesc": "Distribute power equally across all batteries. Best for hardware-balanced systems.",
+    "batteryControlModeTab": "Management mode",
+    "batteryControlTab": "Battery control",
+    "calibrationLabel": "Charge to 100% — bypasses the configured max SoC for one session. Auto-disables when SoC reaches 100%.",
+    "calibrationTab": "LFP calibration",
     "gridChargeTab": "Grid charging",
     "gridDischargeTab": "Grid discharging",
     "modalTitle": "Home Battery",
