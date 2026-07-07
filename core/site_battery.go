@@ -11,8 +11,13 @@ import (
 	"github.com/evcc-io/evcc/core/keys"
 	"github.com/evcc-io/evcc/core/loadpoint"
 	"github.com/evcc-io/evcc/hems/hems"
+	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/config"
 )
+
+// batteryLog is the dedicated "battery" log area for solar control and the fast loop,
+// so battery lines can be filtered and level-controlled separately from "site".
+var batteryLog = util.NewLogger("battery")
 
 // chargeTaperRange is the SoC band (percentage points) before maxSoc in which the
 // charge power is linearly tapered down to chargeMinFactor. This mimics the CC/CV
@@ -115,7 +120,7 @@ func (site *Site) SetBatteryMode(batMode api.BatteryMode) {
 	site.Lock()
 	defer site.Unlock()
 
-	site.log.DEBUG.Println("set battery mode:", batMode)
+	batteryLog.DEBUG.Println("set battery mode:", batMode)
 
 	if site.batteryMode != batMode {
 		site.setBatteryMode(batMode)
@@ -137,13 +142,13 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 
 	// put battery into hold mode when charging is active and HEMS dimmed
 	if dimmed := hems.Dimmed(site.hems); site.fromTo(batteryMode, api.BatteryCharge) && dimmed != nil && *dimmed {
-		site.log.DEBUG.Println("battery mode: HEMS dimmed")
+		batteryLog.DEBUG.Println("battery mode: HEMS dimmed")
 		batteryMode = api.BatteryHold
 	}
 
 	// stop discharging to grid when HEMS curtailed production, but keep self-consumption
 	if curtailed := hems.Curtailed(site.hems); site.fromTo(batteryMode, api.BatteryDischarge) && curtailed != nil && *curtailed {
-		site.log.DEBUG.Println("battery mode: HEMS curtailed")
+		batteryLog.DEBUG.Println("battery mode: HEMS curtailed")
 		batteryMode = api.BatteryNormal
 	}
 
@@ -155,7 +160,7 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 				site.SetBatteryMode(batteryMode)
 			}
 		} else {
-			site.log.ERROR.Println("battery mode:", err)
+			batteryLog.ERROR.Println("battery mode:", err)
 		}
 	}
 
@@ -169,7 +174,7 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 			// Holding the last setpoints would keep a discharging battery running
 			// with no min-soc re-check. Enforce the hard floor instead so a stuck
 			// meter read can never drain the pack below min.
-			site.log.DEBUG.Println("solar power: skipping tick, site power unavailable")
+			batteryLog.DEBUG.Println("solar power: skipping tick, site power unavailable")
 			site.enforceBatteryMinSoc()
 		}
 	}
@@ -201,7 +206,7 @@ func (site *Site) enforceBatteryMinSoc() {
 
 		if atFloor {
 			if err := ctrl.SetBatteryDischargePower(0); err != nil {
-				site.log.ERROR.Printf("battery min-soc floor: %v", err)
+				batteryLog.ERROR.Printf("battery min-soc floor: %v", err)
 			}
 		}
 	}
@@ -270,7 +275,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		site.batteryCalibrationCharge = false
 		site.Unlock()
 		site.publish(keys.BatteryCalibrationCharge, false)
-		site.log.DEBUG.Printf("battery calibration charge complete (soc %.0f%%)", site.battery.Soc)
+		batteryLog.DEBUG.Printf("battery calibration charge complete (soc %.0f%%)", site.battery.Soc)
 	}
 
 	surplus := -sitePower // positive = exporting (solar surplus)
@@ -313,11 +318,11 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 			failed := false
 			if err := e.ctrl.SetBatteryChargePower(0); err != nil {
-				site.log.ERROR.Printf("battery charge power: %v", err)
+				batteryLog.ERROR.Printf("battery charge power: %v", err)
 				failed = true
 			}
 			if err := e.ctrl.SetBatteryDischargePower(0); err != nil {
-				site.log.ERROR.Printf("battery discharge power: %v", err)
+				batteryLog.ERROR.Printf("battery discharge power: %v", err)
 				failed = true
 			}
 			if failed {
@@ -374,7 +379,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 	}
 	plan.threshold = threshold
 
-	site.log.TRACE.Printf("battery decision: surplus=%.0fW sitePower=%.0fW threshold=%.0fW soc=%.0f%% evPower=%.0fW",
+	batteryLog.TRACE.Printf("battery decision: surplus=%.0fW sitePower=%.0fW threshold=%.0fW soc=%.0f%% evPower=%.0fW",
 		surplus, sitePower, threshold, site.battery.Soc, evPower)
 
 	switch {
@@ -460,7 +465,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							}
 							for ci, c := range cand {
 								if socC, ok := deviceSoc(c.dev); ok && worstSoc-socC > socSwitchThreshold {
-									site.log.DEBUG.Printf("solar power: charge swap %s (%.0f%%) → %s (%.0f%%)",
+									batteryLog.DEBUG.Printf("solar power: charge swap %s (%.0f%%) → %s (%.0f%%)",
 										sel[worstIdx].dev.Config().Name, worstSoc,
 										c.dev.Config().Name, socC)
 									chargeSwapIn = c
@@ -498,7 +503,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
-					site.log.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(full), surplus, tierPerBat, maxChargePerBat)
+					batteryLog.DEBUG.Printf("solar power: charge tier %d/%d — %.0fW surplus, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(full), surplus, tierPerBat, maxChargePerBat)
 				} else {
 					site.batteryChargeActive = nil
 				}
@@ -521,7 +526,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					}
 					deferStop = append(deferStop, others...)
 					active = active[bestIdx : bestIdx+1]
-					site.log.DEBUG.Printf("solar power: charge share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
+					batteryLog.DEBUG.Printf("solar power: charge share %.0fW below %.0fW min, concentrating on lowest-soc battery (%.0f%%)", surplus/float64(len(all)-len(full)), minEffectiveShare, bestSoc)
 				}
 			}
 			// if tiering is off but BatteryPowerLimiter is available: use all active batteries equally
@@ -573,7 +578,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 
 			if err := e.ctrl.SetBatteryChargePower(chargePower); err != nil {
-				site.log.ERROR.Printf("battery charge power: %v", err)
+				batteryLog.ERROR.Printf("battery charge power: %v", err)
 				if isSwapIn {
 					chargeSwapInFailed = true
 				}
@@ -593,10 +598,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		}
 		if hasChargeSwap {
 			if chargeSwapInFailed {
-				site.log.WARN.Printf("solar power: charge swap failed, keeping %s", chargeSwapOut.dev.Config().Name)
+				batteryLog.WARN.Printf("solar power: charge swap failed, keeping %s", chargeSwapOut.dev.Config().Name)
 				delete(site.batteryStopped, chargeSwapOut.dev.Config().Name)
 				if err := chargeSwapOut.ctrl.SetBatteryChargePower(share); err != nil {
-					site.log.ERROR.Printf("battery charge power fallback: %v", err)
+					batteryLog.ERROR.Printf("battery charge power fallback: %v", err)
 				} else {
 					planWrote = true
 				}
@@ -622,7 +627,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				plan.standby = append(plan.standby, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
 			}
 		}
-		site.log.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
+		batteryLog.DEBUG.Printf("solar power: charge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 		stopAll(deferStop)
 
 	case sitePower > threshold:
@@ -642,7 +647,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 		}
 		if dischargeTarget <= standbyPower {
 			stopAll(all)
-			site.log.DEBUG.Printf("solar power: discharge prevented (EV deficit only), stop")
+			batteryLog.DEBUG.Printf("solar power: discharge prevented (EV deficit only), stop")
 			break
 		}
 		var active, empty []entry
@@ -724,7 +729,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 							}
 							for ci, c := range cand {
 								if socC, ok := deviceSoc(c.dev); ok && socC-worstSoc > socSwitchThreshold {
-									site.log.DEBUG.Printf("solar power: discharge swap %s (%.0f%%) → %s (%.0f%%)",
+									batteryLog.DEBUG.Printf("solar power: discharge swap %s (%.0f%%) → %s (%.0f%%)",
 										sel[worstIdx].dev.Config().Name, worstSoc,
 										c.dev.Config().Name, socC)
 									dischargeSwapIn = c
@@ -761,7 +766,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 						standby = append(standby, active[needed:]...)
 						active = active[:needed]
 					}
-					site.log.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(empty), dischargeTarget, tierPerBat, maxDischargePerBat)
+					batteryLog.DEBUG.Printf("solar power: discharge tier %d/%d — %.0fW target, %.0fW/bat tier target (%.0fW rated)", needed, len(all)-len(empty), dischargeTarget, tierPerBat, maxDischargePerBat)
 				} else {
 					site.batteryDischargeActive = nil
 				}
@@ -783,7 +788,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 					}
 					deferStop = append(deferStop, others...)
 					active = active[bestIdx : bestIdx+1]
-					site.log.DEBUG.Printf("solar power: discharge share %.0fW below %.0fW min, concentrating on highest-soc battery (%.0f%%)", dischargeTarget/float64(len(all)-len(empty)), minEffectiveShare, bestSoc)
+					batteryLog.DEBUG.Printf("solar power: discharge share %.0fW below %.0fW min, concentrating on highest-soc battery (%.0f%%)", dischargeTarget/float64(len(all)-len(empty)), minEffectiveShare, bestSoc)
 				}
 			}
 		}
@@ -817,7 +822,7 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			}
 
 			if err := e.ctrl.SetBatteryDischargePower(dischargePower); err != nil {
-				site.log.ERROR.Printf("battery discharge power: %v", err)
+				batteryLog.ERROR.Printf("battery discharge power: %v", err)
 				if isSwapIn {
 					dischargeSwapInFailed = true
 				}
@@ -838,10 +843,10 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 			plan.oppositeEvExcluded = 0
 		}
 		if hasDischargeSwap && dischargeSwapInFailed {
-			site.log.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
+			batteryLog.WARN.Printf("solar power: discharge swap failed, keeping %s", dischargeSwapOut.dev.Config().Name)
 			delete(site.batteryStopped, dischargeSwapOut.dev.Config().Name)
 			if err := dischargeSwapOut.ctrl.SetBatteryDischargePower(share); err != nil {
-				site.log.ERROR.Printf("battery discharge power fallback: %v", err)
+				batteryLog.ERROR.Printf("battery discharge power fallback: %v", err)
 			} else {
 				planWrote = true
 			}
@@ -869,12 +874,12 @@ func (site *Site) applyBatterySolarPower(rate api.Rate, sitePower float64) {
 				plan.standby = append(plan.standby, batteryPlanEntry{e.ctrl, e.dev.Instance(), e.dev.Config().Name, capW})
 			}
 		}
-		site.log.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
+		batteryLog.DEBUG.Printf("solar power: discharge %.0fW across %d/%d batteries", share*float64(len(active)), len(active), len(all))
 		stopAll(deferStop)
 
 	default:
 		stopAll(all)
-		site.log.DEBUG.Printf("solar power: balanced, stop")
+		batteryLog.DEBUG.Printf("solar power: balanced, stop")
 	}
 }
 
@@ -910,7 +915,7 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 		// independent limits (buy vs feed-in rate) can both be active at once;
 		// charge wins to avoid buying and immediately selling
 		if batteryGridDischargeActive && batMode != api.BatteryCharge {
-			site.log.WARN.Println("battery mode: grid charge and grid discharge both active, charge takes priority")
+			batteryLog.WARN.Println("battery mode: grid charge and grid discharge both active, charge takes priority")
 		}
 		res = keepUnlessModified(api.BatteryCharge)
 	case site.dischargeControlActive(rate) || (batteryGridDischargeActive && site.evFastChargingActive()):
@@ -964,14 +969,14 @@ func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], discharge
 
 	if discharge {
 		if minSoc > 0 && soc <= minSoc {
-			site.log.DEBUG.Printf("battery %s: reserve soc reached (%.0f <= %.0f)", deviceTitleOrName(dev), soc, minSoc)
+			batteryLog.DEBUG.Printf("battery %s: reserve soc reached (%.0f <= %.0f)", deviceTitleOrName(dev), soc, minSoc)
 			return true, nil
 		}
 		return false, nil
 	}
 
 	if maxSoc > 0 && maxSoc < 100 && soc >= maxSoc {
-		site.log.DEBUG.Printf("battery %s: limit soc reached (%.0f >= %.0f)", deviceTitleOrName(dev), soc, maxSoc)
+		batteryLog.DEBUG.Printf("battery %s: limit soc reached (%.0f >= %.0f)", deviceTitleOrName(dev), soc, maxSoc)
 		return true, nil
 	}
 
@@ -1021,7 +1026,7 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		}
 
 		if !slices.Contains(batCtrl.BatteryModes(), deviceMode) {
-			site.log.DEBUG.Printf("battery %s does not support mode: %s", deviceTitleOrName(dev), deviceMode)
+			batteryLog.DEBUG.Printf("battery %s does not support mode: %s", deviceTitleOrName(dev), deviceMode)
 			continue
 		}
 
@@ -1033,7 +1038,7 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		}
 
 		site.batteryModeApplied[name] = deviceMode
-		site.log.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), deviceMode)
+		batteryLog.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), deviceMode)
 	}
 
 	return nil
