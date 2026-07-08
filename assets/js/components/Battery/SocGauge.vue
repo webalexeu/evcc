@@ -40,11 +40,9 @@
 				:class="{ 'layer--active': isCharging || isDischarging }"
 				:style="{ '--rotate': arrowRotate }"
 			/>
-			<BatteryHold
-				:size="ICON_SIZE.M"
-				class="layer"
-				:class="{ 'layer--active': mode === BATTERY_MODE.HOLD }"
-			/>
+<!-- FORK (feat/battery_loop): upstream's BatteryHold layer removed - under watt-level
+			     control HOLD is active, not paused, so the arrow/dot icons drive it. Restore the
+			     BatteryHold layer (active on BATTERY_MODE.HOLD) to follow upstream. -->
 			<BatteryHoldCharge
 				:size="ICON_SIZE.M"
 				class="layer"
@@ -59,7 +57,6 @@
 import { defineComponent, type PropType } from "vue";
 import { BATTERY_MODE, ICON_SIZE } from "@/types/evcc";
 import ArrowDown from "../MaterialIcon/ArrowDown.vue";
-import BatteryHold from "../MaterialIcon/BatteryHold.vue";
 import BatteryHoldCharge from "../MaterialIcon/BatteryHoldCharge.vue";
 import BatteryCharge from "../MaterialIcon/BatteryCharge.vue";
 import BatteryDischarge from "../MaterialIcon/BatteryDischarge.vue";
@@ -72,8 +69,10 @@ const C = SIZE / 2;
 const R = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * R;
 
+// FORK (feat/battery_loop): BATTERY_MODE.HOLD intentionally omitted — see
+// BatteryStatusCard.statusState. Watt-level solar control drives charge/discharge while the
+// mode stays HOLD, so the gauge should show real power, not a lock. Restore HOLD to follow upstream.
 const LOCKED_MODES: BATTERY_MODE[] = [
-	BATTERY_MODE.HOLD,
 	BATTERY_MODE.HOLDCHARGE,
 	BATTERY_MODE.CHARGE,
 	BATTERY_MODE.DISCHARGE,
@@ -83,7 +82,7 @@ const LOCKED_MODES: BATTERY_MODE[] = [
 // tweens instead of hard-swapping
 export default defineComponent({
 	name: "SocGauge",
-	components: { ArrowDown, BatteryHold, BatteryHoldCharge, BatteryCharge, BatteryDischarge, Dot },
+	components: { ArrowDown, BatteryCharge, BatteryDischarge, BatteryHoldCharge, Dot },
 	props: {
 		soc: { type: Number, default: 0 },
 		color: { type: String, default: "" },
