@@ -123,7 +123,7 @@ func TestBatteryHoldAppliedOnce(t *testing.T) {
 	batCon.EXPECT().SetBatteryMode(api.BatteryHold).Times(1)
 
 	for range 3 {
-		site.updateBatteryMode(true, api.Rate{})
+		site.updateBatteryMode(true, api.Rate{}, 0, true)
 	}
 
 	ctrl.Finish()
@@ -149,7 +149,7 @@ func TestBatteryHoldNotShared(t *testing.T) {
 	fullCon.EXPECT().SetBatteryMode(api.BatteryHold).Times(1)
 	emptyCon.EXPECT().SetBatteryMode(gomock.Any()).Times(0)
 
-	site.updateBatteryMode(true, api.Rate{})
+	site.updateBatteryMode(true, api.Rate{}, 0, true)
 
 	ctrl.Finish()
 }
