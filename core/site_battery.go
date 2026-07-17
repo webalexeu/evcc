@@ -7,8 +7,13 @@ import (
 	"github.com/evcc-io/evcc/api"
 	"github.com/evcc-io/evcc/core/keys"
 	"github.com/evcc-io/evcc/core/loadpoint"
+	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/config"
 )
+
+// battery is the dedicated log area for battery mode control, so battery
+// logging can be filtered and levelled independently, e.g. levels: {battery: trace}.
+var battery = struct{ log *util.Logger }{log: util.NewLogger("battery")}
 
 func batteryModeModified(mode api.BatteryMode) bool {
 	return mode != api.BatteryUnknown && mode != api.BatteryNormal
@@ -41,7 +46,7 @@ func (site *Site) SetBatteryMode(batMode api.BatteryMode) {
 	site.Lock()
 	defer site.Unlock()
 
-	site.log.DEBUG.Println("set battery mode:", batMode)
+	battery.log.DEBUG.Println("set battery mode:", batMode)
 
 	if site.batteryMode != batMode {
 		site.setBatteryMode(batMode)
@@ -58,7 +63,7 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate)
 	// put battery into hold mode when charging is active and HEMS dimmed
 	fromToCharge := batteryMode == api.BatteryCharge || batteryMode == api.BatteryUnknown && site.batteryMode == api.BatteryCharge
 	if dimmed := hemsDimmed(site.hems); fromToCharge && dimmed != nil && *dimmed {
-		site.log.DEBUG.Println("battery mode: HEMS dimmed")
+		battery.log.DEBUG.Println("battery mode: HEMS dimmed")
 		batteryMode = api.BatteryHold
 	}
 
@@ -69,7 +74,7 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive bool, rate api.Rate)
 				site.SetBatteryMode(batteryMode)
 			}
 		} else {
-			site.log.ERROR.Println("battery mode:", err)
+			battery.log.ERROR.Println("battery mode:", err)
 		}
 	}
 }
@@ -110,6 +115,9 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive bool, rate api.Rat
 		res = api.BatteryNormal
 	}
 
+	battery.log.TRACE.Printf("required mode: %s (current: %s, grid charge: %t, external: %s)",
+		res, batMode, batteryGridChargeActive, extMode)
+
 	return res
 }
 
@@ -133,7 +141,7 @@ func (site *Site) batteryMaxSocReached(dev config.Device[api.Meter]) (bool, erro
 	}
 
 	if _, max := batLimiter.GetSocLimits(); max > 0 && max < 100 && soc >= max {
-		site.log.DEBUG.Printf("battery %s: limit soc reached (%.0f > %.0f)", deviceTitleOrName(dev), soc, max)
+		battery.log.DEBUG.Printf("battery %s: limit soc reached (%.0f > %.0f)", deviceTitleOrName(dev), soc, max)
 		return true, nil
 	}
 
@@ -173,7 +181,7 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 
 		if mode != api.BatteryUnknown {
 			if err := batCtrl.SetBatteryMode(mode); err == nil {
-				site.log.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), mode)
+				battery.log.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), mode)
 			} else if !errors.Is(err, api.ErrNotAvailable) {
 				return err
 			}

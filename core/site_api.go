@@ -352,7 +352,7 @@ func (site *Site) GetBatteryDischargeControl() bool {
 
 // SetBatteryDischargeControl sets the battery control mode (no discharge only)
 func (site *Site) SetBatteryDischargeControl(val bool) error {
-	site.log.DEBUG.Println("set battery discharge control:", val)
+	battery.log.DEBUG.Println("set battery discharge control:", val)
 
 	if !site.hasBatteryControl() {
 		return ErrBatteryControlNotAvailable
@@ -398,7 +398,7 @@ func (site *Site) GetBatteryGridChargeLimit() *float64 {
 }
 
 func (site *Site) SetBatteryGridChargeLimit(val *float64) error {
-	site.log.DEBUG.Println("set grid charge limit:", printPtr("%.1f", val))
+	battery.log.DEBUG.Println("set grid charge limit:", printPtr("%.1f", val))
 
 	if !site.hasBatteryControl() {
 		return ErrBatteryControlNotAvailable
@@ -475,7 +475,7 @@ func (site *Site) GetBatteryModeExternal() api.BatteryMode {
 
 // SetBatteryModeExternal sets the external battery mode
 func (site *Site) SetBatteryModeExternal(mode api.BatteryMode) error {
-	site.log.DEBUG.Printf("set external battery mode: %s", mode.String())
+	battery.log.DEBUG.Printf("set external battery mode: %s", mode.String())
 
 	if !site.hasBatteryControl() {
 		return ErrBatteryControlNotAvailable

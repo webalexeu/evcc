@@ -303,7 +303,7 @@ func (site *Site) Boot(log *util.Logger, loadpoints []*Loadpoint, tariffs *tarif
 	shutdown.Register(func() {
 		if mode := site.GetBatteryMode(); batteryModeModified(mode) {
 			if err := site.applyBatteryMode(api.BatteryNormal); err != nil {
-				site.log.ERROR.Println("battery mode:", err)
+				battery.log.ERROR.Println("battery mode:", err)
 			}
 		}
 	})
