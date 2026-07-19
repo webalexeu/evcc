@@ -203,6 +203,14 @@ components:
         solarAdjusted:
           description: Solar forecast is adjusted to real production data (experimental).
           type: boolean
+        batterySolarControl:
+          type: boolean
+        batterySolarPool:
+          type: boolean
+        batteryCalibrationCharge:
+          type: boolean
+        batteryControlDeadBand:
+          type: number
         batteryGridChargeLimit:
           description: Price or emission limit for charging the home battery from grid.
           type: number
