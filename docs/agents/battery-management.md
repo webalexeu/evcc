@@ -186,12 +186,12 @@ Both are only evaluated when `soc >= prioritySoc` — below that, [§9](#9-prior
 
 ### Why "battery covers the EV" is self-limiting in PV mode
 
-Above `bufferSoc` the fast loop sets `dischargeEvExcluded = 0`, so the EV's load lands in the discharge target. This does **not** mean the battery backfills the charger's full power. `sitePower` includes `batteryPower` (discharging is positive), so battery discharge *raises* `sitePower`, which drives `targetCurrent` down in `pvMaxCurrent` until it hits the `minCurrent` floor that `batteryBuffered` itself pins. The loop settles with the charger at `minCurrent` and the battery covering that floor minus any solar surplus.
+Above `bufferSoc` the fast loop sets `dischargeExcluded = 0`, so the EV's load lands in the discharge target. This does **not** mean the battery backfills the charger's full power. `sitePower` includes `batteryPower` (discharging is positive), so battery discharge *raises* `sitePower`, which drives `targetCurrent` down in `pvMaxCurrent` until it hits the `minCurrent` floor that `batteryBuffered` itself pins. The loop settles with the charger at `minCurrent` and the battery covering that floor minus any solar surplus.
 
 Consequences:
 
 - A watt cap on the battery's EV contribution would be meaningless here: above `minCurrent` it never binds (surplus exists, so the discharge target is ~0), and below `minCurrent` it is unhonorable (the charger cannot go lower — the only way down is to pause it, which is what `bufferSoc = off` already does).
-- The one mode where `evPower` is *not* surplus-bounded is Now/plan charging, which bypasses `pvMaxCurrent` entirely. That case is governed by `batteryDischargeControl` ([§11](#11-discharge-control-batterydischargecontrol)), not by `bufferSoc`.
+- The one mode where loadpoint power is *not* surplus-bounded is Now/plan charging, which bypasses `pvMaxCurrent` entirely. That case is governed by `batteryDischargeControl` ([§11](#11-discharge-control-batterydischargecontrol)), not by `bufferSoc`.
 
 `bufferSoc` off is encoded as `0` (Go: `bufferSoc > 0 && ...`) or `100` (UI default and `|| 100` fallback); both make the gate unsatisfiable.
 
@@ -201,37 +201,39 @@ Consequences:
 
 When enabled, modifies battery discharge behaviour per-charger:
 
-- **Fast/planned charging** (car connected StatusB+, mode=Now or planActive or minSocNotReached): the power consumed by **those specific chargers** (`evPowerFast`) is excluded from the discharge target — grid covers their load. Other chargers not in fast/planned mode and house loads are still covered by the battery. StatusC is not required so phase-negotiation transitions don't momentarily re-enable this protection.
-- **Smart cost active**: car is actually charging (StatusC) and the current tariff rate is below the smart cost limit — full EV power excluded.
+- **Fast/planned charging** (car connected StatusB+, mode=Now or planActive or minSocNotReached): the power consumed by **that specific loadpoint** (`loadpointPowerFast`) is excluded from the discharge target — grid covers its load. Other loadpoints not in fast/planned mode and house loads are still covered by the battery. StatusC is not required so phase-negotiation transitions don't momentarily re-enable this protection. This applies equally to EV chargers and heating loadpoints (heat pumps) — both expose the same generic status/mode/plan accessors, so a heat pump in Now/Boost mode or with an active plan is excluded exactly like a fast-charging EV.
+- **Smart cost active**: car is actually charging (StatusC) and the current tariff rate is below the smart cost limit — full loadpoint power excluded.
 
-**Key behaviour**: discharge control is independent of `bufferSoc`. When the toggle is on and a fast/planned charger is active, battery does not cover that charger's load regardless of SoC level. It only covers house loads and other (non-fast) EV chargers, which is independent of this flag.
+**Key behaviour**: discharge control is independent of `bufferSoc`. When the toggle is on and a fast/planned loadpoint is active, battery does not cover that loadpoint's load regardless of SoC level. It only covers house loads and other (non-fast) loadpoints, which is independent of this flag.
 
-### How `dischargeEvExcluded` is derived
+### How `dischargeExcluded` is derived
 
-The main loop computes a single value in `buildBatterySnapshot` and publishes it on the snapshot; the fast loop subtracts it from every discharge target (`dischargeTarget = Σbatt + grid + dischargeOffset − dischargeEvExcluded`).
+The main loop computes a single value in `buildBatterySnapshot` and publishes it on the snapshot; the fast loop subtracts it from every discharge target (`dischargeTarget = Σbatt + grid + dischargeOffset − dischargeExcluded`).
 
-1. `evPowerFast` = Σ `GetChargePower()` over loadpoints where `GetStatus() != StatusA && IsFastChargingActive()`
-2. `evPower` = Σ `GetChargePower()` over all non-heating loadpoints
+1. `loadpointPowerFast` = Σ `GetChargePower()` over loadpoints where `GetStatus() != StatusA && IsFastChargingActive()`
+2. `loadpointPower` = Σ `GetChargePower()` over all loadpoints (EV chargers and heating loadpoints alike; boosting loadpoints are excluded from both sums instead, see below)
 
 ```go
 if site.dischargeControlActive(rate) {
-    dischargeEvExcluded = evPowerFast          // (1) discharge control wins
+    dischargeExcluded = loadpointPowerFast     // (1) discharge control wins
 } else if !(site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc) {
-    dischargeEvExcluded = evPower              // (2) below bufferSoc: battery refuses the EV
-}                                              // (3) else 0: battery covers the EV
+    dischargeExcluded = loadpointPower         // (2) below bufferSoc: battery refuses the loadpoint
+}                                              // (3) else 0: battery covers the loadpoint
 ```
 
 The three outcomes, in precedence order:
 
-| Condition | `dischargeEvExcluded` | Battery covers |
+| Condition | `dischargeExcluded` | Battery covers |
 | --- | --- | --- |
-| `dischargeControlActive` | `evPowerFast` | house + non-fast chargers |
-| else, SoC ≤ `bufferSoc` (or unset) | `evPower` | house only |
-| else (SoC > `bufferSoc`) | `0` | house + EV (bounded by `minCurrent`, see [§10](#10-buffer-soc-buffersoc--bufferstartsoc)) |
+| `dischargeControlActive` | `loadpointPowerFast` | house + non-fast loadpoints |
+| else, SoC ≤ `bufferSoc` (or unset) | `loadpointPower` | house only |
+| else (SoC > `bufferSoc`) | `0` | house + loadpoints (bounded by `minCurrent`, see [§10](#10-buffer-soc-buffersoc--bufferstartsoc)) |
 
-`dischargeControlActive` is checked **first**, so when the toggle is on and a fast/planned charger is active the battery refuses that charger's load regardless of SoC — `bufferSoc` cannot override it.
+`dischargeControlActive` is checked **first**, so when the toggle is on and a fast/planned loadpoint is active the battery refuses that loadpoint's load regardless of SoC — `bufferSoc` cannot override it.
 
-There is no separate "battery may power the EV" toggle and none is needed: `bufferSoc` governs the PV case (and self-limits), `batteryDischargeControl` governs the fast-charge case. A third control would be a third source of truth over the same decision.
+There is no separate "battery may power the loadpoint" toggle and none is needed: `bufferSoc` governs the PV case (and self-limits), `batteryDischargeControl` governs the fast-charge case. A third control would be a third source of truth over the same decision.
+
+**Heating loadpoints** (heat pumps) were excluded from this accounting entirely until 2026-08-18 — a heat pump's real consumption (thermostat/compressor cycling, independent of any evcc Boost command) was invisible to `buildBatterySnapshot` and silently folded into generic house load, so neither `bufferSoc` nor `batteryDischargeControl` ever protected the battery from it. Fixed by removing the `IsHeating()` skip in the accumulation loop; heating loadpoints now flow through the exact same gates as EV chargers, using the same generic `Loadpoint` accessors (heat pump loadpoints already run the same mode/plan/minSoc machinery under the hood).
 
 If neither `dischargeTarget` nor `chargeTarget` exceeds `snap.threshold` (`standbyPower + batteryControlDeadBand`), the fast loop commits to idle and stops all batteries.
 
@@ -309,14 +311,14 @@ The battery is controlled by a **1 s fast loop** (`core/site_battery_fast.go`) t
 | Direction, tiering, sticky selection, swaps | — | ✔ |
 | Power commands + stops | — | ✔ every tick |
 
-**Snapshot contract** (`batterySnapshot`, built by `buildBatterySnapshot`, swapped under `batteryPlanMu`): per-battery `ctrl/meter/name`, cached `soc`, `min/maxSoc`, `chargeCap/dischargeCap`, plus `chargeOffset` / `dischargeOffset` / `dischargeEvExcluded` / `threshold` and the pool/tiering/sticky/tapering/calibration flags. No power, no direction. SoC is read once per main cycle — it moves ~0.02 %/5 s, so the fast loop selects/tiers off the snapshot without live SoC reads.
+**Snapshot contract** (`batterySnapshot`, built by `buildBatterySnapshot`, swapped under `batteryPlanMu`): per-battery `ctrl/meter/name`, cached `soc`, `min/maxSoc`, `chargeCap/dischargeCap`, plus `chargeOffset` / `dischargeOffset` / `dischargeExcluded` / `threshold` and the pool/tiering/sticky/tapering/calibration flags. No power, no direction. SoC is read once per main cycle — it moves ~0.02 %/5 s, so the fast loop selects/tiers off the snapshot without live SoC reads.
 
 **Parking.** The snapshot is cleared (and the fast loop parks) when solar control is off, or when a higher-precedence controller overrides it — grid charge, or external/API battery mode. Those overrides mirror the precedence in `requiredBatteryMode`, so the fast loop never fights a controller that owns the battery.
 
 When solar control is switched **fully off**, the main loop first stops every battery once before nil'ing the snapshot. This matters: the last actively-driven battery still holds the setpoint the fast loop wrote, and `SetBatteryMode(Normal)` only flips the mode register, not the power register — without the explicit stop it would keep charging/discharging indefinitely. The stop runs under `batteryPlanMu`, so the fast tick cannot run concurrently and the fast loop remains the sole power writer. On an *override* transition no stop is sent: the incoming controller re-commands power every cycle, so a stop would only fight it.
 
 **Fast tick** (`batteryFastTick`): read fresh grid → stale-grid guard → parallel battery power reads → sampling-skew guard → compute both energy-balance targets:
-- `dischargeTarget = Σbatt + grid + dischargeOffset − dischargeEvExcluded`
+- `dischargeTarget = Σbatt + grid + dischargeOffset − dischargeExcluded`
 - `chargeTarget    = −Σbatt − (grid + chargeOffset)`
 
 Both add back the measured battery power, so they are **ramp-invariant** (this was the fix for the early full-scale oscillation). Direction = whichever exceeds `threshold` (idle if neither). Then `fastControl` runs the full per-direction pipeline off the snapshot: eligibility filter (charge drops maxSoc units unless calibrating; discharge drops minSoc units and **fails closed** on an unreadable SoC), `computeTier` (hysteresis, sized at `batteryTierFraction` of rated), sticky selection with 3 % swap threshold, per-battery cap + charge taper, **parallel writes**, then deferred stops for the rest.
