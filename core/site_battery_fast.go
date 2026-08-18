@@ -68,18 +68,18 @@ type batterySnapEntry struct {
 // batterySnapshot is the main loop -> fast loop contract, rebuilt each main cycle under
 // batteryPlanMu. It carries no power or direction - the fast loop derives those.
 type batterySnapshot struct {
-	enabled             bool // fast loop may drive power (Hold mode, solar control, not overridden)
-	pool                bool
-	tiering             bool
-	sticky              bool
-	tapering            bool
-	calibration         bool
-	chargeOffset        float64 // residual, or 0 below prioritySoc
-	dischargeOffset     float64 // residual
-	dischargeEvExcluded float64 // EV power the battery must not cover (discharge only)
-	threshold           float64 // dead band
-	created             time.Time
-	batteries           []batterySnapEntry
+	enabled           bool // fast loop may drive power (Hold mode, solar control, not overridden)
+	pool              bool
+	tiering           bool
+	sticky            bool
+	tapering          bool
+	calibration       bool
+	chargeOffset      float64 // residual, or 0 below prioritySoc
+	dischargeOffset   float64 // residual
+	dischargeExcluded float64 // EV/heating loadpoint power the battery must not cover (discharge only)
+	threshold         float64 // dead band
+	created           time.Time
+	batteries         []batterySnapEntry
 }
 
 // fastEntry references a snapshot battery for the per-tick selection working set.
@@ -179,7 +179,7 @@ func (site *Site) batteryFastTick() {
 
 	// Energy-balance targets (battery convention: positive = discharging). Ramp-invariant
 	// because measured battPower is added back. Only one is positive away from the crossing.
-	dischargeTarget := battPower + gridPower + snap.dischargeOffset - snap.dischargeEvExcluded
+	dischargeTarget := battPower + gridPower + snap.dischargeOffset - snap.dischargeExcluded
 	chargeTarget := -battPower - (gridPower + snap.chargeOffset)
 
 	// desired direction from the fresh signal
