@@ -278,6 +278,16 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 			e.hasSocLimit = true
 			e.minSoc, e.maxSoc = limiter.GetSocLimits()
 		}
+		// global min/max soc clamp: whichever of individual/global is more restrictive wins,
+		// applied even to batteries without their own BatterySocLimiter (FORK)
+		if min := site.batteryMinSoc; min > 0 && min > e.minSoc {
+			e.hasSocLimit = true
+			e.minSoc = min
+		}
+		if max := site.batteryMaxSoc; max > 0 && (e.maxSoc <= 0 || max < e.maxSoc) {
+			e.hasSocLimit = true
+			e.maxSoc = max
+		}
 		if limiter, ok := api.Cap[api.BatteryPowerLimiter](dev.Instance()); ok {
 			e.chargeCap, e.dischargeCap = limiter.GetPowerLimits()
 		}
@@ -348,8 +358,10 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 
 // batterySocLimitReached reports whether the battery has reached the soc bound
 // that should stop the requested mode: the max soc when charging, or the min
-// soc reserve when discharging to grid. A configured limit of 0 disables the
-// respective check (max is also disabled at 100).
+// soc reserve when discharging to grid. The bound is the more restrictive of the
+// battery's own limit and the site-global batteryMinSoc/batteryMaxSoc clamp (FORK),
+// and the global clamp also applies to batteries without their own BatterySocLimiter.
+// A resulting limit of 0 disables the respective check (max is also disabled at 100).
 func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], discharge bool) (bool, error) {
 	// Calibration charge bypasses the maxSoc limit so the battery charges to 100 %;
 	// the min-soc reserve on discharge is never bypassed.
@@ -359,8 +371,25 @@ func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], discharge
 
 	meter := dev.Instance()
 
-	batLimiter, ok := api.Cap[api.BatterySocLimiter](meter)
-	if !ok {
+	var minSoc, maxSoc float64
+	if batLimiter, ok := api.Cap[api.BatterySocLimiter](meter); ok {
+		minSoc, maxSoc = batLimiter.GetSocLimits()
+	}
+	// global min/max soc clamp: whichever of individual/global is more restrictive wins,
+	// applied even to batteries without their own BatterySocLimiter (FORK)
+	if global := site.batteryMinSoc; global > 0 && global > minSoc {
+		minSoc = global
+	}
+	if global := site.batteryMaxSoc; global > 0 && (maxSoc <= 0 || global < maxSoc) {
+		maxSoc = global
+	}
+
+	// pick the bound relevant to the requested direction; 0 disables the check
+	limit := maxSoc
+	if discharge {
+		limit = minSoc
+	}
+	if limit <= 0 {
 		return false, nil
 	}
 
@@ -374,17 +403,15 @@ func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], discharge
 		return false, err
 	}
 
-	minSoc, maxSoc := batLimiter.GetSocLimits()
-
 	if discharge {
-		if minSoc > 0 && soc <= minSoc {
+		if soc <= minSoc {
 			batteryLog.DEBUG.Printf("battery %s: reserve soc reached (%.0f <= %.0f)", deviceTitleOrName(dev), soc, minSoc)
 			return true, nil
 		}
 		return false, nil
 	}
 
-	if maxSoc > 0 && maxSoc < 100 && soc >= maxSoc {
+	if maxSoc < 100 && soc >= maxSoc {
 		batteryLog.DEBUG.Printf("battery %s: limit soc reached (%.0f >= %.0f)", deviceTitleOrName(dev), soc, maxSoc)
 		return true, nil
 	}
