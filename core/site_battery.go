@@ -265,6 +265,16 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 			e.hasSocLimit = true
 			e.minSoc, e.maxSoc = limiter.GetSocLimits()
 		}
+		// global min/max soc clamp: whichever of individual/global is more restrictive wins,
+		// applied even to batteries without their own BatterySocLimiter (FORK)
+		if min := site.batteryMinSoc; min > 0 && min > e.minSoc {
+			e.hasSocLimit = true
+			e.minSoc = min
+		}
+		if max := site.batteryMaxSoc; max > 0 && (e.maxSoc <= 0 || max < e.maxSoc) {
+			e.hasSocLimit = true
+			e.maxSoc = max
+		}
 		if limiter, ok := api.Cap[api.BatteryPowerLimiter](dev.Instance()); ok {
 			e.chargeCap, e.dischargeCap = limiter.GetPowerLimits()
 		}
@@ -331,8 +341,16 @@ func (site *Site) batteryMaxSocReached(dev config.Device[api.Meter]) (bool, erro
 
 	meter := dev.Instance()
 
-	batLimiter, ok := api.Cap[api.BatterySocLimiter](meter)
-	if !ok {
+	max := 0.0
+	if batLimiter, ok := api.Cap[api.BatterySocLimiter](meter); ok {
+		_, max = batLimiter.GetSocLimits()
+	}
+	// global max soc clamp: whichever of individual/global is more restrictive wins,
+	// applied even to batteries without their own BatterySocLimiter (FORK)
+	if global := site.batteryMaxSoc; global > 0 && (max <= 0 || global < max) {
+		max = global
+	}
+	if max <= 0 {
 		return false, nil
 	}
 
@@ -346,7 +364,7 @@ func (site *Site) batteryMaxSocReached(dev config.Device[api.Meter]) (bool, erro
 		return false, err
 	}
 
-	if _, max := batLimiter.GetSocLimits(); max > 0 && max < 100 && soc >= max {
+	if max < 100 && soc >= max {
 		batteryLog.DEBUG.Printf("battery %s: limit soc reached (%.0f > %.0f)", deviceTitleOrName(dev), soc, max)
 		return true, nil
 	}

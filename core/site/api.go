@@ -55,6 +55,13 @@ type API interface {
 	GetBufferStartSoc() float64
 	SetBufferStartSoc(float64) error
 
+	// GetBatteryMinSoc / SetBatteryMinSoc: global floor clamped onto every battery's own minSoc (FORK)
+	GetBatteryMinSoc() float64
+	SetBatteryMinSoc(float64) error
+	// GetBatteryMaxSoc / SetBatteryMaxSoc: global ceiling clamped onto every battery's own maxSoc (FORK)
+	GetBatteryMaxSoc() float64
+	SetBatteryMaxSoc(float64) error
+
 	// GetBatteryGridChargeLimit get the grid charge limit
 	GetBatteryGridChargeLimit() *float64
 	// SetBatteryGridChargeLimit sets the grid charge limit
@@ -105,7 +112,6 @@ type API interface {
 
 	GetBatteryCalibrationCharge() bool
 	SetBatteryCalibrationCharge(bool) error
-
 
 	GetBatteryControlDeadBand() float64
 	SetBatteryControlDeadBand(float64) error

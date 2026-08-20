@@ -361,6 +361,30 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/NumberResult"
+  /batteryminsoc/{soc}:
+    post:
+      operationId: setBatteryMinSoc
+      summary: Global battery min soc floor (FORK)
+      description: "Global floor clamped onto every battery's own minSoc - whichever is more restrictive wins. 0 disables the global floor."
+      tags:
+        - battery
+      parameters:
+        - $ref: "#/components/parameters/soc"
+      responses:
+        "200":
+          $ref: "#/components/responses/NumberResult"
+  /batterymaxsoc/{soc}:
+    post:
+      operationId: setBatteryMaxSoc
+      summary: Global battery max soc ceiling (FORK)
+      description: "Global ceiling clamped onto every battery's own maxSoc - whichever is more restrictive wins. 0 disables the global ceiling."
+      tags:
+        - battery
+      parameters:
+        - $ref: "#/components/parameters/soc"
+      responses:
+        "200":
+          $ref: "#/components/responses/NumberResult"
   /loadpoints/{id}/batteryboost/{enable}:
     post:
       operationId: setLoadpointBatteryBoost
