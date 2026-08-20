@@ -90,6 +90,8 @@ type Site struct {
 	prioritySoc               float64              // prefer battery up to this Soc
 	bufferSoc                 float64              // continue charging on battery above this Soc (EV loadpoints)
 	bufferStartSoc            float64              // start charging on battery above this Soc (EV loadpoints)
+	batteryMinSoc             float64              // global floor clamped onto every battery's own minSoc, whichever is more restrictive wins (0 = disabled)
+	batteryMaxSoc             float64              // global ceiling clamped onto every battery's own maxSoc, whichever is more restrictive wins (0 = disabled)
 	batteryDischargeControl   bool                 // prevent battery discharge for fast and planned charging
 	batterySolarControl       bool                 // actively charge from surplus / discharge to cover loads
 	batteryCalibrationCharge  bool                 // one-shot: bypass maxSoc and charge to 100% for LFP calibration (not persisted)
@@ -497,6 +499,16 @@ func (site *Site) restoreSettings() error {
 			return err
 		}
 	}
+	if v, err := settings.Float(keys.BatteryMinSoc); err == nil {
+		if err := site.SetBatteryMinSoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
+			return err
+		}
+	}
+	if v, err := settings.Float(keys.BatteryMaxSoc); err == nil {
+		if err := site.SetBatteryMaxSoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
+			return err
+		}
+	}
 	if v, err := settings.Bool(keys.BatteryDischargeControl); err == nil {
 		if err := site.setBatteryDischargeControl(v); err != nil && !errors.Is(err, ErrBatteryControlNotAvailable) {
 			return err
@@ -876,14 +888,24 @@ func (site *Site) updateBatteryMeters() {
 		}
 
 		// battery soc limits, read once per cycle for mode control and optimizer
+		minSoc, maxSoc := 0.0, 0.0
 		if bsl, ok := api.Cap[api.BatterySocLimiter](meter); ok {
-			if minSoc, maxSoc, err := bsl.GetSocLimits(); err == nil {
-				mm[i].MinSoc = new(minSoc)
-				mm[i].MaxSoc = new(maxSoc)
+			if bslMin, bslMax, err := bsl.GetSocLimits(); err == nil {
+				minSoc, maxSoc = bslMin, bslMax
 			} else {
 				site.log.ERROR.Printf("battery %d soc limits: %v", i+1, err)
 			}
 		}
+		// global min/max soc clamp: whichever of individual/global is more restrictive wins,
+		// applied even to batteries without their own BatterySocLimiter (FORK)
+		if global := site.batteryMinSoc; global > 0 && global > minSoc {
+			minSoc = global
+		}
+		if global := site.batteryMaxSoc; global > 0 && (maxSoc <= 0 || global < maxSoc) {
+			maxSoc = global
+		}
+		mm[i].MinSoc = new(minSoc)
+		mm[i].MaxSoc = new(maxSoc)
 
 		if bpl, ok := api.Cap[api.BatteryPowerLimiter](meter); ok && maxDischargePower >= 0 {
 			empty := mm[i].Soc != nil && mm[i].MinSoc != nil && *mm[i].Soc <= *mm[i].MinSoc
@@ -1539,6 +1561,8 @@ func (site *Site) prepare() {
 	site.publish(keys.PrioritySoc, site.prioritySoc)
 	site.publish(keys.BufferSoc, site.bufferSoc)
 	site.publish(keys.BufferStartSoc, site.bufferStartSoc)
+	site.publish(keys.BatteryMinSoc, site.batteryMinSoc)
+	site.publish(keys.BatteryMaxSoc, site.batteryMaxSoc)
 	site.publish(keys.BatteryMode, site.batteryMode)
 	site.publish(keys.BatteryDischargeControl, site.batteryDischargeControl)
 	site.publish(keys.BatteryGridDischarge, site.batteryGridDischarge)
