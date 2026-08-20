@@ -168,6 +168,11 @@ func (m *Marstek) GetPowerLimits() (charge, discharge float64) {
 
 var _ api.BatteryController = (*Marstek)(nil)
 
+// BatteryModes implements the api.BatteryController interface
+func (m *Marstek) BatteryModes() []api.BatteryMode {
+	return []api.BatteryMode{api.BatteryNormal, api.BatteryHold, api.BatteryCharge, api.BatteryHoldCharge}
+}
+
 // SetBatteryMode implements the api.BatteryController interface.
 //
 // Hold and Charge keep RS485 control enabled so the fast loop retains ownership;
