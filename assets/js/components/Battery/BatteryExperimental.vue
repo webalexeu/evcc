@@ -90,6 +90,33 @@
 					</label>
 				</div>
 			</template>
+			<hr class="my-3" />
+			<div class="fw-bold mb-2">{{ $t("batterySettings.globalLimitsTab") }}</div>
+			<p class="text-muted small mb-3">{{ $t("batterySettings.globalLimitsDesc") }}</p>
+			<SettingsFormRow id="batteryExpMinSoc" :label="$t('batterySettings.globalMinSoc')">
+				<select
+					id="batteryExpMinSoc"
+					class="form-select form-select-sm"
+					:value="state.batteryMinSoc ?? 0"
+					@change="changeMinSoc"
+				>
+					<option v-for="opt in socLimitOptions" :key="opt.value" :value="opt.value">
+						{{ opt.name }}
+					</option>
+				</select>
+			</SettingsFormRow>
+			<SettingsFormRow id="batteryExpMaxSoc" :label="$t('batterySettings.globalMaxSoc')">
+				<select
+					id="batteryExpMaxSoc"
+					class="form-select form-select-sm"
+					:value="state.batteryMaxSoc ?? 0"
+					@change="changeMaxSoc"
+				>
+					<option v-for="opt in socLimitOptions" :key="opt.value" :value="opt.value">
+						{{ opt.name }}
+					</option>
+				</select>
+			</SettingsFormRow>
 		</Card>
 
 		<Card
@@ -108,8 +135,10 @@ import { defineComponent } from "vue";
 import store from "@/store";
 import settings from "@/settings";
 import api from "@/api";
-import { SMART_COST_TYPE, CURRENCY, type BatteryMeter } from "@/types/evcc";
+import formatter from "@/mixins/formatter";
+import { SMART_COST_TYPE, CURRENCY, type BatteryMeter, type SelectOption } from "@/types/evcc";
 import Card from "../Helper/Card.vue";
+import SettingsFormRow from "../Helper/SettingsFormRow.vue";
 import SmartCostLimit from "../Tariff/SmartCostLimit.vue";
 import BatteryStatusCards from "./BatteryStatusCards.vue";
 import BatteryConfigCard from "./BatteryConfigCard.vue";
@@ -123,11 +152,13 @@ export default defineComponent({
 	name: "BatteryExperimental",
 	components: {
 		Card,
+		SettingsFormRow,
 		SmartCostLimit,
 		BatteryStatusCards,
 		BatteryConfigCard,
 		BatteryHistoryCard,
 	},
+	mixins: [formatter],
 	data() {
 		const now = new Date();
 		return {
@@ -187,6 +218,13 @@ export default defineComponent({
 			const { co2, grid } = store.uiForecast.value;
 			return this.state.smartCostType === SMART_COST_TYPE.CO2 ? co2 : grid;
 		},
+		socLimitOptions(): SelectOption<number>[] {
+			// 0-100 in steps of 5, 0 = disabled
+			return Array.from(Array(21).keys()).map((i) => {
+				const soc = i * 5;
+				return { value: soc, name: soc === 0 ? this.$t("general.none") : this.fmtPercentage(soc) };
+			});
+		},
 		smartCostLimitProps() {
 			return {
 				currentLimit: this.gridChargeLimit,
@@ -236,6 +274,20 @@ export default defineComponent({
 		async changePool(value: boolean) {
 			try {
 				await api.post(`batterysolarpool/${value ? "true" : "false"}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeMinSoc(e: Event) {
+			try {
+				await api.post(`batteryminsoc/${(e.target as HTMLSelectElement).value}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeMaxSoc(e: Event) {
+			try {
+				await api.post(`batterymaxsoc/${(e.target as HTMLSelectElement).value}`);
 			} catch (err) {
 				console.error(err);
 			}

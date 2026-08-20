@@ -273,6 +273,10 @@ export interface State {
   prioritySoc?: number;
   /** Battery buffer start SoC in %. Solar charging starts automatically above this level. */
   bufferStartSoc?: number;
+  /** Global battery min soc floor in %, clamped onto every battery's own minSoc (FORK). 0 disables. */
+  batteryMinSoc?: number;
+  /** Global battery max soc ceiling in %, clamped onto every battery's own maxSoc (FORK). 0 disables. */
+  batteryMaxSoc?: number;
   /** Home battery discharge is prevented during fast charging and planned charging. */
   batteryDischargeControl?: boolean;
   /** Home battery is allowed to discharge to the grid (experimental). */
