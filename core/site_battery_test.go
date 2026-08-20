@@ -500,3 +500,59 @@ func TestEvFastChargingActiveDisabledLoadpoint(t *testing.T) {
 
 	assert.False(t, site.evFastChargingActive())
 }
+
+// TestBatteryMaxSocReachedGlobalClamp verifies the global battery max soc ceiling
+// (FORK) composes with each battery's own maxSoc as "whichever is more restrictive
+// wins", and also applies to batteries without their own BatterySocLimiter.
+func TestBatteryMaxSocReachedGlobalClamp(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		hasLimiter         bool
+		individualMax      float64
+		globalMax          float64
+		soc                float64
+		expectLimitReached bool
+	}{
+		{"no global clamp, below individual max", true, 80, 0, 70, false},
+		{"no global clamp, at individual max", true, 80, 0, 80, true},
+		{"global stricter than individual (no cap)", true, 100, 90, 92, true},
+		{"global stricter than individual (no cap), below global", true, 100, 90, 85, false},
+		{"global looser than individual - individual still wins", true, 80, 90, 85, true},
+		{"global stricter than individual - global wins", true, 90, 80, 82, true},
+		{"no individual limiter, global clamp still applies", false, 0, 70, 75, true},
+		{"no individual limiter, below global clamp", false, 0, 70, 65, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			batSoc := api.NewMockBattery(ctrl)
+			batSoc.EXPECT().Soc().Return(tc.soc, nil).AnyTimes()
+
+			var bat api.Meter
+			if tc.hasLimiter {
+				batSocLimit := api.NewMockBatterySocLimiter(ctrl)
+				batSocLimit.EXPECT().GetSocLimits().Return(0.0, tc.individualMax).AnyTimes()
+				bat = &struct {
+					api.Meter
+					api.Battery
+					api.BatterySocLimiter
+				}{Battery: batSoc, BatterySocLimiter: batSocLimit}
+			} else {
+				bat = &struct {
+					api.Meter
+					api.Battery
+				}{Battery: batSoc}
+			}
+
+			site := &Site{
+				log:           util.NewLogger("foo"),
+				batteryMaxSoc: tc.globalMax,
+			}
+
+			dev := config.NewStaticDevice(config.Named{}, bat)
+			reached, err := site.batterySocLimitReached(dev, false)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expectLimitReached, reached)
+		})
+	}
+}

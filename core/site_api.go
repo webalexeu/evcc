@@ -324,6 +324,72 @@ func (site *Site) SetBufferSoc(soc float64) error {
 	return nil
 }
 
+// GetBatteryMinSoc returns the global battery min soc floor (FORK)
+func (site *Site) GetBatteryMinSoc() float64 {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batteryMinSoc
+}
+
+// SetBatteryMinSoc sets the global battery min soc floor. Clamped onto every
+// battery's own minSoc in buildBatterySnapshot / batteryMaxSocReached - whichever
+// is more restrictive wins (FORK)
+func (site *Site) SetBatteryMinSoc(soc float64) error {
+	site.Lock()
+	defer site.Unlock()
+
+	if len(site.batteryMeters) == 0 {
+		return ErrBatteryNotConfigured
+	}
+
+	if soc != 0 && site.batteryMaxSoc != 0 && soc > site.batteryMaxSoc {
+		return errors.New("battery min soc must be smaller or equal than battery max soc")
+	}
+
+	site.log.DEBUG.Println("set battery min soc:", soc)
+
+	if site.batteryMinSoc != soc {
+		site.batteryMinSoc = soc
+		settings.SetFloat(keys.BatteryMinSoc, site.batteryMinSoc)
+		site.publish(keys.BatteryMinSoc, site.batteryMinSoc)
+	}
+
+	return nil
+}
+
+// GetBatteryMaxSoc returns the global battery max soc ceiling (FORK)
+func (site *Site) GetBatteryMaxSoc() float64 {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batteryMaxSoc
+}
+
+// SetBatteryMaxSoc sets the global battery max soc ceiling. Clamped onto every
+// battery's own maxSoc in buildBatterySnapshot / batteryMaxSocReached - whichever
+// is more restrictive wins (FORK)
+func (site *Site) SetBatteryMaxSoc(soc float64) error {
+	site.Lock()
+	defer site.Unlock()
+
+	if len(site.batteryMeters) == 0 {
+		return ErrBatteryNotConfigured
+	}
+
+	if soc != 0 && site.batteryMinSoc != 0 && soc < site.batteryMinSoc {
+		return errors.New("battery max soc must be larger or equal than battery min soc")
+	}
+
+	site.log.DEBUG.Println("set battery max soc:", soc)
+
+	if site.batteryMaxSoc != soc {
+		site.batteryMaxSoc = soc
+		settings.SetFloat(keys.BatteryMaxSoc, site.batteryMaxSoc)
+		site.publish(keys.BatteryMaxSoc, site.batteryMaxSoc)
+	}
+
+	return nil
+}
+
 // GetBufferStartSoc returns the BufferStartSoc
 func (site *Site) GetBufferStartSoc() float64 {
 	site.RLock()
