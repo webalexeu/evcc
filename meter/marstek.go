@@ -3,11 +3,19 @@ package meter
 import (
 	"context"
 	"encoding/binary"
+	"time"
 
 	"github.com/evcc-io/evcc/api"
 	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/modbus"
 )
+
+// marstekDefaultDelay paces requests to the Venus's RS485-over-network bridge,
+// which has been observed to time out or refuse reconnects under the fast
+// loop's sustained ~4 req/s per active battery (read + up to 3 writes every
+// tick, by design - see batterySolarTapering/fast-loop docs) when hit with no
+// inter-request gap. Overridable via the device's own `delay:` setting.
+const marstekDefaultDelay = 150 * time.Millisecond
 
 // Marstek is a native modbus implementation for the Marstek Venus battery family.
 //
@@ -60,7 +68,8 @@ func NewMarstekFromConfig(ctx context.Context, other map[string]any) (api.Meter,
 		Capacity          float64
 	}{
 		Settings: modbus.Settings{
-			ID: 1,
+			ID:    1,
+			Delay: marstekDefaultDelay,
 		},
 		Generation:        3,
 		WorkModeNormal:    1,
@@ -75,7 +84,11 @@ func NewMarstekFromConfig(ctx context.Context, other map[string]any) (api.Meter,
 		return nil, err
 	}
 
-	conn, err := modbus.NewConnection(ctx, cc.URI, cc.Device, cc.Comset, cc.Baudrate, cc.Settings.Protocol(), cc.ID)
+	// Settings.Connection (not the lower-level NewConnection) applies Delay/
+	// Timeout from cc.Settings - a prior version called NewConnection
+	// directly here, which silently dropped both regardless of what a user
+	// configured.
+	conn, err := cc.Settings.Connection(ctx)
 	if err != nil {
 		return nil, err
 	}
