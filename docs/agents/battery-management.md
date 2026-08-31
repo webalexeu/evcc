@@ -37,6 +37,8 @@ When enabled, the site drives `SetBatteryChargePower` / `SetBatteryDischargePowe
 
 The `BatteryPowerController` (and `BatteryController` mode switching) for Marstek Venus is implemented natively in `meter/marstek.go`, which owns the Modbus connection and writes the RS485 control registers (`42000` enable, `42010` direction, `42020`/`42021` charge/discharge watts) directly in Go. The `marstek-venus-e-v3` template is a thin wrapper that renders `type: marstek`; keeping the register sequences in Go (rather than template setters) decouples the fast loop from upstream's Marstek template changes. Read registers are generation-specific (Gen 3: power `30006`, SoC `34002`×0.1); control registers are generation-independent.
 
+**Request pacing**: since the fast loop has no write-deadband (a full write sequence — enable, charge/discharge-W, direction — is reissued every tick as a watchdog heartbeat while a battery is active), an active battery sees ~4 Modbus round trips/second sustained. Marstek's RS485-over-network bridge has been observed to time out or refuse reconnects under that load with no inter-request gap. `NewMarstekFromConfig` builds its connection via `modbus.Settings.Connection()` (not the lower-level `NewConnection`) specifically so the device's `delay`/`timeout` YAML settings take effect, and defaults `delay` to `marstekDefaultDelay` (150ms) when unset — override per-device with `delay:` if a unit needs more or less pacing.
+
 ### 3.1 Surplus Calculation
 
 Two formulas are used depending on battery SoC relative to `prioritySoc`:
