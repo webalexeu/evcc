@@ -322,6 +322,8 @@ A battery that is already stopped is not re-stopped every tick. `stopBatteries` 
 
 The battery is controlled by a **1 s fast loop** (`core/site_battery_fast.go`) that owns *every* power decision. The main loop is a slow supervisor: it sets the battery **mode** and publishes a **snapshot**; it commands no power and picks no direction. This is the OpenEMS-style continuous-setpoint model — direction is simply the sign of the energy-balance need, so there is no separate charge/discharge decision to wait on and no flip-latency to patch.
 
+The mode decision is pure precedence: `updateBatteryMode` / `requiredBatteryMode` take only grid charge/discharge flags and the rate — no site power. Those signatures are now identical to upstream (the fork only appends `buildBatterySnapshot` + the parking branch at the tail of `updateBatteryMode`). Site power reaches battery control solely through the snapshot's offsets, read by the fast loop. Direction of travel: main-loop battery decisions migrate upstream in small steps; only the fast loop stays fork-specific.
+
 | | Main loop (supervisor) | Fast loop (controller, 1 s) |
 |---|---|---|
 | Battery mode (Hold/Charge/Normal), EV, tariffs, calibration | ✔ | — |
