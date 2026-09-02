@@ -1340,15 +1340,12 @@ func (site *Site) update(lp updater) {
 	site.updateCircuits()
 	site.applyHemsLimits()
 
-	var latestSitePower float64 // captured for battery solar control
-	var sitePowerValid bool     // false on failed meter read: solar control must skip the tick
-
 	if state, err := site.updateMeters(); err != nil {
 		site.log.ERROR.Println(err)
 	} else {
 		go site.optimizerUpdateAsync(tariff.SlotDuration)
 
-		latestSitePower, sitePowerValid = site.updatePower(lp, state, totalChargePower, consumption, feedin)
+		site.updatePower(lp, state, totalChargePower, consumption, feedin)
 	}
 
 	// smart grid charging
@@ -1369,7 +1366,7 @@ func (site *Site) update(lp updater) {
 	}
 	site.publish(keys.BatteryGridDischargeActive, batteryGridDischargeActive)
 
-	site.updateBatteryMode(batteryGridChargeActive, batteryGridDischargeActive, rate, latestSitePower, sitePowerValid)
+	site.updateBatteryMode(batteryGridChargeActive, batteryGridDischargeActive, rate)
 
 	// re-evaluate against the updated loadpoint state
 	site.publishSuggestions()
@@ -1378,8 +1375,7 @@ func (site *Site) update(lp updater) {
 }
 
 // updatePower calculates the site power balance and updates the given loadpoint.
-// Returns the site power for battery solar control, valid unless the meter read failed.
-func (site *Site) updatePower(lp updater, state siteState, totalChargePower float64, consumption, feedin api.Rates) (float64, bool) {
+func (site *Site) updatePower(lp updater, state siteState, totalChargePower float64, consumption, feedin api.Rates) {
 	// prioritize if possible
 	var flexiblePower float64
 	if lp != nil && loadpoint.SurplusFlexible(lp) {
@@ -1438,8 +1434,6 @@ func (site *Site) updatePower(lp updater, state siteState, totalChargePower floa
 	if telemetry.Enabled() && totalChargePower > standbyPower {
 		go telemetry.UpdateChargeProgress(site.log, totalChargePower, greenShareLoadpoints)
 	}
-
-	return res.power, true
 }
 
 // currentRate returns the rate for the current time, warning if the rates don't cover it
