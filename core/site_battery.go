@@ -136,8 +136,8 @@ func (site *Site) fromTo(requested, m api.BatteryMode) bool {
 	return requested == m || requested == api.BatteryUnknown && site.batteryMode == m
 }
 
-func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischargeActive bool, rate api.Rate, sitePower float64, sitePowerValid bool) {
-	batteryMode := site.requiredBatteryMode(batteryGridChargeActive, batteryGridDischargeActive, rate, sitePower)
+func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischargeActive bool, rate api.Rate) {
+	batteryMode := site.requiredBatteryMode(batteryGridChargeActive, batteryGridDischargeActive, rate)
 
 	// put battery into hold mode when charging is active and HEMS dimmed
 	if dimmed := hems.Dimmed(site.hems); site.fromTo(batteryMode, api.BatteryCharge) && dimmed != nil && *dimmed {
@@ -167,7 +167,6 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 	// loop owns all power decisions off fresh grid/battery readings. When solar control is
 	// off - or when a higher-precedence mode overrides it (grid charge, external/API control) -
 	// clear the snapshot so the fast loop parks and the mode-based control owns the battery.
-	_ = sitePowerValid
 	extMode := site.GetBatteryModeExternal()
 	site.Lock()
 	extModeReset := extMode == api.BatteryUnknown && !site.batteryModeExternalTimer.IsZero()
@@ -302,8 +301,8 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 		len(snap.batteries), site.battery.Soc, chargeOffset, residual, dischargeExcluded, boostPower, snap.threshold)
 }
 
-// requiredBatteryMode determines required battery mode based on grid charge/discharge, rate, and site power
-func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischargeActive bool, rate api.Rate, sitePower float64) api.BatteryMode {
+// requiredBatteryMode determines required battery mode based on grid charge/discharge and rate
+func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischargeActive bool, rate api.Rate) api.BatteryMode {
 	var res api.BatteryMode
 	batMode := site.GetBatteryMode()
 	extMode := site.GetBatteryModeExternal()
