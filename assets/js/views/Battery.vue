@@ -30,6 +30,129 @@
 					/>
 
 					<Card
+						v-if="solarControlPossible"
+						class="mb-4 box-pull-out"
+						:title="$t('batterySettings.batteryControlTab')"
+					>
+						<div class="form-check form-switch mb-3">
+							<input
+								id="batteryExpSolarControl"
+								:checked="state.batterySolarControl"
+								class="form-check-input"
+								type="checkbox"
+								role="switch"
+								@change="changeSolarControl"
+							/>
+							<label class="form-check-label" for="batteryExpSolarControl">
+								{{ $t("batterySettings.batteryControl") }}
+							</label>
+						</div>
+						<template v-if="state.batterySolarControl">
+							<div class="mb-1 small text-muted fw-semibold text-uppercase">
+								{{ $t("batterySettings.batteryControlModeTab") }}
+							</div>
+							<div class="d-flex gap-4 mb-3">
+								<div class="form-check">
+									<input
+										id="batteryExpSolarModePerBattery"
+										:checked="!state.batterySolarPool"
+										class="form-check-input"
+										type="radio"
+										name="batteryExpSolarMode"
+										@change="changePool(false)"
+									/>
+									<label
+										class="form-check-label"
+										for="batteryExpSolarModePerBattery"
+									>
+										{{ $t("batterySettings.batteryControlModePerBattery") }}
+									</label>
+								</div>
+								<div class="form-check">
+									<input
+										id="batteryExpSolarModePool"
+										:checked="state.batterySolarPool"
+										class="form-check-input"
+										type="radio"
+										name="batteryExpSolarMode"
+										@change="changePool(true)"
+									/>
+									<label class="form-check-label" for="batteryExpSolarModePool">
+										{{ $t("batterySettings.batteryControlModePool") }}
+									</label>
+								</div>
+							</div>
+							<p class="text-muted small mb-3">
+								{{
+									state.batterySolarPool
+										? $t("batterySettings.batteryControlModePoolDesc")
+										: $t("batterySettings.batteryControlModePerBatteryDesc")
+								}}
+							</p>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.calibrationTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpCalibrationCharge"
+									:checked="state.batteryCalibrationCharge"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeCalibrationCharge"
+								/>
+								<label class="form-check-label" for="batteryExpCalibrationCharge">
+									{{ $t("batterySettings.calibrationLabel") }}
+								</label>
+							</div>
+						</template>
+						<hr class="my-3" />
+						<div class="fw-bold mb-2">{{ $t("batterySettings.globalLimitsTab") }}</div>
+						<p class="text-muted small mb-3">
+							{{ $t("batterySettings.globalLimitsDesc") }}
+						</p>
+						<SettingsFormRow
+							id="batteryExpMinSoc"
+							:label="$t('batterySettings.globalMinSoc')"
+						>
+							<select
+								id="batteryExpMinSoc"
+								class="form-select form-select-sm"
+								:value="state.batteryMinSoc ?? 0"
+								@change="changeMinSoc"
+							>
+								<option
+									v-for="opt in socLimitOptions"
+									:key="opt.value"
+									:value="opt.value"
+								>
+									{{ opt.name }}
+								</option>
+							</select>
+						</SettingsFormRow>
+						<SettingsFormRow
+							id="batteryExpMaxSoc"
+							:label="$t('batterySettings.globalMaxSoc')"
+						>
+							<select
+								id="batteryExpMaxSoc"
+								class="form-select form-select-sm"
+								:value="state.batteryMaxSoc ?? 0"
+								@change="changeMaxSoc"
+							>
+								<option
+									v-for="opt in socLimitOptions"
+									:key="opt.value"
+									:value="opt.value"
+								>
+									{{ opt.name }}
+								</option>
+							</select>
+						</SettingsFormRow>
+					</Card>
+
+					<Card
 						v-if="gridChargeVisible"
 						class="box-pull-out"
 						:title="$t('batterySettings.gridChargeTab')"
@@ -57,9 +180,11 @@ import { defineComponent } from "vue";
 import store from "@/store";
 import settings from "@/settings";
 import api from "@/api";
-import { SMART_COST_TYPE, CURRENCY, type BatteryMeter } from "@/types/evcc";
+import formatter from "@/mixins/formatter";
+import { SMART_COST_TYPE, CURRENCY, type BatteryMeter, type SelectOption } from "@/types/evcc";
 import Header from "../components/Top/Header.vue";
 import Card from "../components/Helper/Card.vue";
+import SettingsFormRow from "../components/Helper/SettingsFormRow.vue";
 import SmartCostLimit from "../components/Tariff/SmartCostLimit.vue";
 import SmartFeedInPriority from "../components/Tariff/SmartFeedInPriority.vue";
 import BatteryStatusCards from "../components/Battery/BatteryStatusCards.vue";
@@ -84,7 +209,9 @@ export default defineComponent({
 		BatteryStatusCards,
 		BatteryConfigCard,
 		BatteryHistoryCard,
+		SettingsFormRow,
 	},
+	mixins: [formatter],
 	head() {
 		return { title: this.$t("batterySettings.modalTitle") };
 	},
@@ -133,6 +260,19 @@ export default defineComponent({
 		},
 		batteryControllable(): boolean {
 			return this.devices.some(({ controllable }) => controllable);
+		},
+		solarControlPossible(): boolean {
+			return this.batteryControllable;
+		},
+		socLimitOptions(): SelectOption<number>[] {
+			// 0-100 in steps of 5, 0 = disabled
+			return Array.from(Array(21).keys()).map((i) => {
+				const soc = i * 5;
+				return {
+					value: soc,
+					name: soc === 0 ? this.$t("general.none") : this.fmtPercentage(soc),
+				};
+			});
 		},
 		gridChargePossible(): boolean {
 			return this.batteryControllable && !!this.state.smartCostAvailable;
@@ -200,6 +340,45 @@ export default defineComponent({
 	methods: {
 		onRangeStart(start: Date) {
 			this.rangeStart = start;
+		},
+		async changeSolarControl(e: Event) {
+			try {
+				await api.post(
+					`batterysolarcontrol/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeCalibrationCharge(e: Event) {
+			try {
+				await api.post(
+					`batterycalibrationcharge/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changePool(value: boolean) {
+			try {
+				await api.post(`batterysolarpool/${value ? "true" : "false"}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeMinSoc(e: Event) {
+			try {
+				await api.post(`batteryminsoc/${(e.target as HTMLSelectElement).value}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeMaxSoc(e: Event) {
+			try {
+				await api.post(`batterymaxsoc/${(e.target as HTMLSelectElement).value}`);
+			} catch (err) {
+				console.error(err);
+			}
 		},
 		async fetchHistory() {
 			if (this.loading || !this.batteryAvailable) return;
