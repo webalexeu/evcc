@@ -57,8 +57,6 @@ const (
 	BatteryGridDischarge       = "batteryGridDischarge"
 	BufferSoc                  = "bufferSoc"
 	BufferStartSoc             = "bufferStartSoc"
-	BatteryMinSoc              = "batteryMinSoc"
-	BatteryMaxSoc              = "batteryMaxSoc"
 	// battery solar control sub-features
 	BatterySolarPool     = "batterySolarPool"
 	BatterySolarTiering  = "batterySolarTiering"
