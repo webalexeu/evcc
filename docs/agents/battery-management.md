@@ -253,18 +253,6 @@ When Charge mode is active, `applyBatteryMode` checks each battery's SoC against
 
 In solar control mode, the tiered selection also filters out batteries that have reached `maxSoc` (moved to the `full` list and stopped).
 
-### Global MaxSoc clamp (`batteryMaxSoc`, FORK)
-
-A site-level ceiling that composes with each battery's own `maxSoc` as **whichever is more restrictive wins** (`effectiveMax = min(individualMax, globalMax)`, treating an unset individual max as unlimited). Set via `POST /batterymaxsoc/{soc}`; `0` disables the global ceiling and each battery's own `maxSoc` applies unmodified.
-
-Applied at both consumers of `GetSocLimits()`:
-- `buildBatterySnapshot` (`core/site_battery.go`) — feeds the solar-control tiered selection and charge tapering, so tapering also ramps down toward the global ceiling when it is the stricter one.
-- `batteryMaxSocReached` (`core/site_battery.go`) — feeds the grid-charge → Hold transition in `applyBatteryMode`.
-
-The global clamp also applies to batteries that expose no `BatterySocLimiter` capability at all — normally such a battery is never capped, but a configured global ceiling still forces one.
-
-**Calibration charge bypass**: `batteryCalibrationCharge` bypasses the global ceiling exactly like it bypasses each battery's own `maxSoc` (same `!snap.calibration` / early-return guards), since calibration's purpose is reaching 100% regardless of any configured cap.
-
 ---
 
 ## 14. MinSoc Enforcement
@@ -272,10 +260,6 @@ The global clamp also applies to batteries that expose no `BatterySocLimiter` ca
 `minSoc` is a **hard discharge floor — enforced no matter what**. No battery discharges below its configured minimum under any meter, read, or control-state failure.
 
 In the discharge case, batteries whose SoC is at or below their `minSoc` (from `BatterySocLimiter`) are moved to the `empty` list and stopped, excluded from the active discharge tier.
-
-### Global MinSoc clamp (`batteryMinSoc`, FORK)
-
-Mirrors the MaxSoc clamp for the floor: `effectiveMin = max(individualMin, globalMin)` — whichever is more restrictive (higher) wins. Set via `POST /batteryminsoc/{soc}`; `0` disables it. Applied in `buildBatterySnapshot` (discharge eligibility) and in `GetBatteryMaxDischargePower`'s per-battery "empty" check (`core/site.go`), so the aggregate discharge-power estimate used for boost/phase-switch sizing doesn't overstate what a globally-floored battery can actually deliver. Also applies to batteries without their own `BatterySocLimiter`.
 
 **Fail closed.** The floor check treats an *unknown* SoC the same as being at the floor:
 
@@ -365,8 +349,6 @@ Both add back the measured battery power, so they are **ramp-invariant** (this w
 | `prioritySoc` | POST `/prioritysoc/{%}` | `prioritySoc` | 0 | Battery charging priority threshold |
 | `bufferSoc` | POST `/buffersoc/{%}` | `bufferSoc` | 0 | SoC above which battery supports EV charging |
 | `bufferStartSoc` | POST `/bufferstartsoc/{%}` | `bufferStartSoc` | 0 | SoC threshold to start battery-supported charging |
-| `batteryMinSoc` (FORK) | POST `/batteryminsoc/{%}` | `batteryMinSoc` | 0 | Global discharge floor, clamped onto each battery's own minSoc (stricter wins); 0 disables |
-| `batteryMaxSoc` (FORK) | POST `/batterymaxsoc/{%}` | `batteryMaxSoc` | 0 | Global charge ceiling, clamped onto each battery's own maxSoc (stricter wins); 0 disables |
 
 ### Internal constants (not configurable at runtime)
 
