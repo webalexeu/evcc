@@ -87,8 +87,6 @@ type Site struct {
 	prioritySoc               float64              // prefer battery up to this Soc
 	bufferSoc                 float64              // continue charging on battery above this Soc (EV loadpoints)
 	bufferStartSoc            float64              // start charging on battery above this Soc (EV loadpoints)
-	batteryMinSoc             float64              // global floor clamped onto every battery's own minSoc, whichever is more restrictive wins (0 = disabled)
-	batteryMaxSoc             float64              // global ceiling clamped onto every battery's own maxSoc, whichever is more restrictive wins (0 = disabled)
 	batteryDischargeControl   bool                 // prevent battery discharge for fast and planned charging
 	batterySolarControl       bool                 // actively charge from surplus / discharge to cover loads
 	batteryCalibrationCharge  bool                 // one-shot: bypass maxSoc and charge to 100% for LFP calibration (not persisted)
@@ -490,16 +488,6 @@ func (site *Site) restoreSettings() error {
 			return err
 		}
 	}
-	if v, err := settings.Float(keys.BatteryMinSoc); err == nil {
-		if err := site.SetBatteryMinSoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
-			return err
-		}
-	}
-	if v, err := settings.Float(keys.BatteryMaxSoc); err == nil {
-		if err := site.SetBatteryMaxSoc(v); err != nil && !errors.Is(err, ErrBatteryNotConfigured) {
-			return err
-		}
-	}
 	if v, err := settings.Bool(keys.BatteryDischargeControl); err == nil {
 		if err := site.SetBatteryDischargeControl(v); err != nil && !errors.Is(err, ErrBatteryControlNotAvailable) {
 			return err
@@ -882,10 +870,6 @@ func (site *Site) updateBatteryMeters() {
 			minSoc := 0.0
 			if bsl, ok := api.Cap[api.BatterySocLimiter](meter); ok {
 				minSoc, _ = bsl.GetSocLimits()
-			}
-			// global min soc clamp mirrors buildBatterySnapshot / batteryMaxSocReached (FORK)
-			if global := site.batteryMinSoc; global > minSoc {
-				minSoc = global
 			}
 			if mm[i].Soc != nil && *mm[i].Soc <= minSoc {
 				empty = true
@@ -1473,8 +1457,6 @@ func (site *Site) prepare() {
 	site.publish(keys.PrioritySoc, site.prioritySoc)
 	site.publish(keys.BufferSoc, site.bufferSoc)
 	site.publish(keys.BufferStartSoc, site.bufferStartSoc)
-	site.publish(keys.BatteryMinSoc, site.batteryMinSoc)
-	site.publish(keys.BatteryMaxSoc, site.batteryMaxSoc)
 	site.publish(keys.BatteryMode, site.batteryMode)
 	site.publish(keys.BatteryDischargeControl, site.batteryDischargeControl)
 	site.publish(keys.BatteryGridDischarge, site.batteryGridDischarge)

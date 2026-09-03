@@ -184,8 +184,6 @@ func (s *HTTPd) RegisterSiteHandlers(site site.API) {
 	routes := map[string]route{
 		"buffersoc":                       {"POST", "/buffersoc/{value:[0-9.]+}", floatHandler(site.SetBufferSoc, site.GetBufferSoc)},
 		"bufferstartsoc":                  {"POST", "/bufferstartsoc/{value:[0-9.]+}", floatHandler(site.SetBufferStartSoc, site.GetBufferStartSoc)},
-		"batteryminsoc":                   {"POST", "/batteryminsoc/{value:[0-9.]+}", floatHandler(site.SetBatteryMinSoc, site.GetBatteryMinSoc)},
-		"batterymaxsoc":                   {"POST", "/batterymaxsoc/{value:[0-9.]+}", floatHandler(site.SetBatteryMaxSoc, site.GetBatteryMaxSoc)},
 		"batterydischargecontrol":         {"POST", "/batterydischargecontrol/{value:[01truefalse]+}", boolHandler(site.SetBatteryDischargeControl, site.GetBatteryDischargeControl)},
 		"batterygriddischarge":            {"POST", "/batterygriddischarge/{value:[01truefalse]+}", boolHandler(site.SetBatteryGridDischarge, site.GetBatteryGridDischarge)},
 		"batterysolarcontrol":             {"POST", "/batterysolarcontrol/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarControl, site.GetBatterySolarControl)},
