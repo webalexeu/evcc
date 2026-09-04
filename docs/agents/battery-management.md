@@ -81,9 +81,11 @@ An additional threshold on top of `standbyPower` (10W) before the system starts 
 
 ---
 
-## 5. Tiered Activation (`computeTier`)
+## 5. Tiered Activation (`batterySolarTiering`, `computeTier`)
 
 Engages enough batteries to handle the target power while avoiding sub-threshold per-unit commands that inverters silently ignore (e.g. Marstek <50W). The tier *count* is sized off a **fraction of each battery's rated power** — `batteryTierFraction = 0.5` (`site_battery.go`) — not the full rating:
+
+Toggleable via `POST /batterysolartiering/{bool}`, MQTT `batterySolarTiering`, or the "Tiered activation" switch in the Battery page's control card (only shown in per-battery mode — pool mode always uses every battery). Default: **true**. Turned off, every battery in the pool gets an equal share of the target regardless of how small.
 
 ```
 tierCount = ceil(target / (batteryTierFraction × ratedPerBat))   # clamped [1, nBatteries]
@@ -345,6 +347,7 @@ Both add back the measured battery power, so they are **ramp-invariant** (this w
 |---------|-----|------|---------|-------------|
 | `batterySolarControl` | POST `/batterysolarcontrol/{bool}` | `batterySolarControl` | false | Enable watt-level solar charge/discharge control |
 | `batterySolarTapering` | POST `/batterysolartapering/{bool}` | `batterySolarTapering` | true | Taper charge power near maxSoc to protect battery health |
+| `batterySolarTiering` | POST `/batterysolartiering/{bool}` | `batterySolarTiering` | true | Engage the minimum number of batteries needed for the target power |
 | `batteryControlDeadBand` | POST `/batterycontroldeadband/{W}` | `batteryControlDeadBand` | 0 | Extra dead band before starting charge/discharge |
 | `batteryDischargeControl` | POST `/batterydischargecontrol/{bool}` | `batteryDischargeControl` | false | Prevent discharge during fast/smart charging |
 | `batteryGridChargeLimit` | POST `/batterygridchargelimit/{price}` | `batteryGridChargeLimit` | null | Charge from grid when tariff ≤ this price |
