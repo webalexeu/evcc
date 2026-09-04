@@ -92,6 +92,23 @@
 							</p>
 							<hr class="my-3" />
 							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.taperingTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarTapering"
+									:checked="state.batterySolarTapering"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeTapering"
+								/>
+								<label class="form-check-label" for="batteryExpSolarTapering">
+									{{ $t("batterySettings.taperingLabel") }}
+								</label>
+							</div>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
 								{{ $t("batterySettings.calibrationTab") }}
 							</div>
 							<div class="form-check form-switch">
@@ -306,6 +323,15 @@ export default defineComponent({
 		async changePool(value: boolean) {
 			try {
 				await api.post(`batterysolarpool/${value ? "true" : "false"}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeTapering(e: Event) {
+			try {
+				await api.post(
+					`batterysolartapering/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
 			} catch (err) {
 				console.error(err);
 			}
