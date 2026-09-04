@@ -58,6 +58,16 @@ type Customization struct {
 	Theme     string
 }
 
+// immutableCache marks a response cacheable for a year without revalidation. Only
+// safe for content-addressed URLs (a content-hashed filename), where "same URL"
+// already implies "same bytes" - private since these responses sit behind auth.
+func immutableCache(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+		h.ServeHTTP(w, r)
+	})
+}
+
 // NewHTTPd creates HTTP server with configured routes for loadpoint
 func NewHTTPd(addr string, hub *SocketHub, custom Customization) *HTTPd {
 	router := mux.NewRouter().StrictSlash(true)
@@ -136,7 +146,13 @@ func NewHTTPd(addr string, hub *SocketHub, custom Customization) *HTTPd {
 	static.HandleFunc("/globals.js", globalsJsHandler(custom))
 	static.HandleFunc("/", indexHandler())
 	for _, dir := range []string{"assets", "meta"} {
-		static.PathPrefix("/" + dir).Handler(http.FileServer(http.FS(assets.Web)))
+		h := http.Handler(http.FileServer(http.FS(assets.Web)))
+		if dir == "assets" {
+			// content-hashed filenames (index-D9lZvCVW.js) only change when their
+			// content does, so the browser can skip revalidation entirely
+			h = immutableCache(h)
+		}
+		static.PathPrefix("/" + dir).Handler(h)
 	}
 
 	static.PathPrefix("/i18n").Handler(http.StripPrefix("/i18n", http.FileServer(http.FS(assets.I18n))))
