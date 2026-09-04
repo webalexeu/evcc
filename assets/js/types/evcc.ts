@@ -288,6 +288,7 @@ export interface State {
   solarAdjusted?: boolean;
   batterySolarControl?: boolean;
   batterySolarPool?: boolean;
+  batterySolarTapering?: boolean;
   batteryCalibrationCharge?: boolean;
   batteryControlDeadBand?: number;
   /** Price or emission limit for charging the home battery from grid. */
