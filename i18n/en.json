@@ -79,6 +79,7 @@
     "noBattery": "No batteries configured.",
     "taperingLabel": "Reduce charge power in the last SoC band before max SoC to protect battery health.",
     "taperingTab": "Charge tapering",
+    "tieringLabel": "Engage only as many batteries as needed for the current power, instead of splitting it across all of them.",
     "usageTab": "Battery usage"
   },
   "colors": {
