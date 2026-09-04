@@ -76,6 +76,8 @@
     "gridDischargeTab": "Décharge vers le réseau",
     "modalTitle": "Batterie domestique",
     "noBattery": "Aucune batterie n'est configurée.",
+    "taperingLabel": "Réduire la puissance de charge en fin de charge (avant le SoC maximum) pour protéger la batterie.",
+    "taperingTab": "Réduction de charge en fin",
     "usageTab": "Utilisation batterie"
   },
   "colors": {
