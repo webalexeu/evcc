@@ -89,21 +89,6 @@
 										: $t("batterySettings.batteryControlModePerBatteryDesc")
 								}}
 							</p>
-							<template v-if="!state.batterySolarPool">
-								<div class="form-check form-switch mb-3">
-									<input
-										id="batteryExpSolarTiering"
-										:checked="state.batterySolarTiering"
-										class="form-check-input"
-										type="checkbox"
-										role="switch"
-										@change="changeTiering"
-									/>
-									<label class="form-check-label" for="batteryExpSolarTiering">
-										{{ $t("batterySettings.tieringLabel") }}
-									</label>
-								</div>
-							</template>
 							<hr class="my-3" />
 							<div class="fw-bold mb-2">
 								{{ $t("batterySettings.taperingTab") }}
@@ -337,15 +322,6 @@ export default defineComponent({
 		async changePool(value: boolean) {
 			try {
 				await api.post(`batterysolarpool/${value ? "true" : "false"}`);
-			} catch (err) {
-				console.error(err);
-			}
-		},
-		async changeTiering(e: Event) {
-			try {
-				await api.post(
-					`batterysolartiering/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
-				);
 			} catch (err) {
 				console.error(err);
 			}
