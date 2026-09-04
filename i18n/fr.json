@@ -77,6 +77,7 @@
     "noBattery": "Aucune batterie n'est configurée.",
     "taperingLabel": "Réduire la puissance de charge en fin de charge (avant le SoC maximum) pour protéger la batterie.",
     "taperingTab": "Réduction de charge en fin",
+    "tieringLabel": "N'activer que le nombre de batteries nécessaire à la puissance actuelle, plutôt que de la répartir sur toutes.",
     "usageTab": "Utilisation batterie"
   },
   "colors": {
