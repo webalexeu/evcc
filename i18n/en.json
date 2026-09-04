@@ -77,6 +77,8 @@
     "gridDischargeTab": "Grid discharging",
     "modalTitle": "Home Battery",
     "noBattery": "No batteries configured.",
+    "taperingLabel": "Reduce charge power in the last SoC band before max SoC to protect battery health.",
+    "taperingTab": "Charge tapering",
     "usageTab": "Battery usage"
   },
   "colors": {
