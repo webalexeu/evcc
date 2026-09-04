@@ -150,9 +150,11 @@ The active battery set is persisted between ticks (`batteryChargeActive`, `batte
 
 ---
 
-## 8. Charge Tapering
+## 8. Charge Tapering (`batterySolarTapering`)
 
 Linearly reduces charge power in the last 5% of SoC before `maxSoc`. Mimics the CC/CV charging profile that protects lithium cells from stress near full charge.
+
+Toggleable via `POST /batterysolartapering/{bool}`, MQTT `batterySolarTapering`, or the "Charge tapering" switch in the Battery page's control card. Default: **true**.
 
 ```
 taperFactor = (maxSoc - currentSoc) / chargeTaperRange   (clamped to minimum 0.25)
@@ -342,6 +344,7 @@ Both add back the measured battery power, so they are **ramp-invariant** (this w
 | Setting | API | MQTT | Default | Description |
 |---------|-----|------|---------|-------------|
 | `batterySolarControl` | POST `/batterysolarcontrol/{bool}` | `batterySolarControl` | false | Enable watt-level solar charge/discharge control |
+| `batterySolarTapering` | POST `/batterysolartapering/{bool}` | `batterySolarTapering` | true | Taper charge power near maxSoc to protect battery health |
 | `batteryControlDeadBand` | POST `/batterycontroldeadband/{W}` | `batteryControlDeadBand` | 0 | Extra dead band before starting charge/discharge |
 | `batteryDischargeControl` | POST `/batterydischargecontrol/{bool}` | `batteryDischargeControl` | false | Prevent discharge during fast/smart charging |
 | `batteryGridChargeLimit` | POST `/batterygridchargelimit/{price}` | `batteryGridChargeLimit` | null | Charge from grid when tariff ≤ this price |
