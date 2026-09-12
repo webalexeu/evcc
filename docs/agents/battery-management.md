@@ -157,15 +157,16 @@ Linearly reduces charge power in the last 5% of SoC before `maxSoc`. Mimics the 
 Toggleable via `POST /batterysolartapering/{bool}`, MQTT `batterySolarTapering`, or the "Charge tapering" switch in the Battery page's control card. Default: **true**.
 
 ```
-taperFactor = (maxSoc - currentSoc) / chargeTaperRange   (clamped to minimum 0.25)
+taperTarget = 100 if calibrating else maxSoc
+taperFactor = (taperTarget - currentSoc) / chargeTaperRange   (clamped to minimum 0.25)
 chargePower = requestedPower × taperFactor
 ```
 
-- **Taper range**: 5% SoC below maxSoc
+- **Taper range**: 5% SoC below the taper target
 - **Minimum factor**: 25% of requested power (never fully stopped by taper)
 - **Per-battery**: applied individually using each battery's `BatterySocLimiter.GetSocLimits()`
 - Applied after the hard-cap from `BatteryPowerLimiter`
-- **Skipped during LFP calibration**: when `batteryCalibrationCharge` is active, tapering is bypassed entirely so batteries charge at full surplus power all the way to 100%
+- **Combines with LFP calibration**: when `batteryCalibrationCharge` is active, the taper band anchors to true 100% instead of the (possibly much lower) daily `maxSoc` - both toggles stay independently user-controlled, and calibration still reaches 100% since the factor floors at 0.25 rather than reaching zero
 
 ---
 

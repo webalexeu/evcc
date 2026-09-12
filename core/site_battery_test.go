@@ -500,3 +500,57 @@ func TestEvFastChargingActiveDisabledLoadpoint(t *testing.T) {
 
 	assert.False(t, site.evFastChargingActive())
 }
+
+type mockBatteryPowerController struct {
+	lastCharge float64
+}
+
+func (m *mockBatteryPowerController) SetBatteryChargePower(watts float64) error {
+	m.lastCharge = watts
+	return nil
+}
+
+func (m *mockBatteryPowerController) SetBatteryDischargePower(watts float64) error {
+	return nil
+}
+
+// TestBatteryChargeTaperCalibration guards that calibration charge (bypass maxSoc
+// to reach true 100%) still tapers when tapering is enabled - anchored to 100%,
+// not to the (possibly much lower) daily maxSoc a plain taper would use.
+func TestBatteryChargeTaperCalibration(t *testing.T) {
+	tests := []struct {
+		name        string
+		calibration bool
+		soc         float64
+		wantPower   float64
+	}{
+		{"no calibration, within taper band of maxSoc", false, 87, 600},       // (90-87)/5
+		{"no calibration, outside taper band", false, 80, 1000},               // untapered
+		{"calibration, below taper band of 100%", true, 87, 1000},             // untapered - taper anchors to 100, not maxSoc
+		{"calibration, within taper band of 100%", true, 97, 600},             // (100-97)/5
+		{"calibration, floors at chargeMinFactor near 100%", true, 99.9, 250}, // (100-99.9)/5=0.02 < 0.25 floor
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := &mockBatteryPowerController{}
+			snap := &batterySnapshot{
+				tapering:    true,
+				calibration: tt.calibration,
+				batteries: []batterySnapEntry{{
+					ctrl:        ctrl,
+					name:        "bat1",
+					soc:         tt.soc,
+					socOK:       true,
+					hasSocLimit: true,
+					maxSoc:      90,
+				}},
+			}
+
+			site := &Site{}
+			site.fastControl(snap, batteryPlanCharge, 1000)
+
+			assert.InDelta(t, tt.wantPower, ctrl.lastCharge, 0.001)
+		})
+	}
+}
