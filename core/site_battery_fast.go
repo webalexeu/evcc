@@ -356,12 +356,22 @@ func (site *Site) fastControl(snap *batterySnapshot, dir batteryPlanDirection, t
 		if c := capOf(e); c > 0 && p > c {
 			p = c
 		}
-		if charge && snap.tapering && !snap.calibration && e.hasSocLimit && e.maxSoc > 0 && e.socOK && e.soc > e.maxSoc-chargeTaperRange {
-			factor := (e.maxSoc - e.soc) / chargeTaperRange
-			if factor < chargeMinFactor {
-				factor = chargeMinFactor
+		if charge && snap.tapering && e.hasSocLimit && e.socOK {
+			// calibration bypasses maxSoc to reach true 100% - taper against that real
+			// target instead of the (possibly much lower) daily maxSoc, so the taper
+			// band stays a genuine "last 5% before full", not stretched across
+			// whatever gap calibration is bridging.
+			taperTarget := e.maxSoc
+			if snap.calibration {
+				taperTarget = 100
 			}
-			p *= factor
+			if taperTarget > 0 && e.soc > taperTarget-chargeTaperRange {
+				factor := (taperTarget - e.soc) / chargeTaperRange
+				if factor < chargeMinFactor {
+					factor = chargeMinFactor
+				}
+				p *= factor
+			}
 		}
 		commands[i] = p
 	}
