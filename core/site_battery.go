@@ -319,6 +319,26 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 		if extMode != batMode {
 			res = extMode
 		}
+	case site.batterySolarControl:
+		// fork solar control: keep RS485 enabled (Hold) so the fast loop owns power every
+		// tick. Normal mode would disable RS485 between ticks and hand control back to the
+		// inverter. Takes precedence over every coarse mode below, including the upstream
+		// optimizer's automatic mode - two independent control systems both trying to drive
+		// the battery is a worse failure mode than automatic mode simply not running while
+		// the fork's fast loop owns the hardware. The two are effectively mutually exclusive
+		// per installation; automatic mode only gets to act once batterySolarControl is off.
+		res = keepUnlessModified(api.BatteryHold)
+	case site.Automatic() && site.unmodelledCharging():
+		// the suggestion ignores loads the optimizer cannot model as storage
+		res = keepUnlessModified(api.BatteryHold)
+	case site.Automatic():
+		// optimizer decides, replacing grid charge limit and discharge control
+		if mode, ok := site.batterySuggestionMode(); ok {
+			res = keepUnlessModified(mode)
+		} else if batteryModeModified(batMode) {
+			// no suggestion: release the battery
+			res = api.BatteryNormal
+		}
 	case batteryGridChargeActive:
 		// independent limits (buy vs feed-in rate) can both be active at once;
 		// charge wins to avoid buying and immediately selling
@@ -330,12 +350,6 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 		// hold wins over feed-in discharge; fast charging holds even without
 		// batteryDischargeControl, selling while an EV fast-charges is worse
 		res = keepUnlessModified(api.BatteryHold)
-	case site.batterySolarControl:
-		// fork solar control: keep RS485 enabled (Hold) so the fast loop owns power every
-		// tick. Normal mode would disable RS485 between ticks and hand control back to the
-		// inverter. Takes precedence over the upstream grid-discharge mode, an incompatible
-		// whole-battery "sell" mode.
-		res = keepUnlessModified(api.BatteryHold)
 	case batteryGridDischargeActive:
 		res = keepUnlessModified(api.BatteryDischarge)
 	case batteryModeModified(batMode):
@@ -343,6 +357,49 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 	}
 
 	return res
+}
+
+// unmodelledCharging reports a loadpoint charging at full power that the optimizer
+// cannot model as storage (unknown vehicle capacity, see optimizerRequest). Its
+// battery suggestion does not account for that load, so the battery must be held.
+func (site *Site) unmodelledCharging() bool {
+	for _, lp := range site.activeLoadpoints() {
+		if v := lp.GetVehicle(); v != nil && v.Capacity() > 0 {
+			continue
+		}
+
+		if lp.GetStatus() == api.StatusC && lp.IsFastChargingActive() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// batterySuggestionMode returns the optimizer's mode for the first controllable battery.
+// TODO apply per battery once the site tracks more than a single battery mode
+func (site *Site) batterySuggestionMode() (api.BatteryMode, bool) {
+	for _, dev := range site.batteryMeters {
+		if dev == nil {
+			continue
+		}
+
+		s := site.suggestion(batteryKey(dev.Config().Name), site.GetBatteryMode().String())
+		if s == nil {
+			continue
+		}
+
+		mode, err := api.BatteryModeString(s.Action)
+		if err != nil {
+			// unknown action, release the battery
+			site.log.DEBUG.Printf("battery %s: cannot apply suggestion %s", deviceTitleOrName(dev), s.Action)
+			return api.BatteryNormal, true
+		}
+
+		return mode, true
+	}
+
+	return api.BatteryUnknown, false
 }
 
 // batterySocLimitReached reports whether the battery has reached the soc bound
