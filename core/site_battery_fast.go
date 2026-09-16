@@ -80,6 +80,15 @@ type batterySnapshot struct {
 	threshold         float64 // dead band
 	created           time.Time
 	batteries         []batterySnapEntry
+
+	// optimizer automatic mode: when automatic is true, the fast loop executes this fixed
+	// direction/target instead of computing one from live grid/battery meters - Charge/
+	// Discharge at the optimizer's suggested watts, Hold/HoldCharge at 0W. automatic is false
+	// (not just automaticDir == idle) whenever the optimizer isn't dictating anything this
+	// cycle (off, Normal, unparseable, or no suggestion yet), so solar-following is untouched.
+	automatic       bool
+	automaticDir    batteryPlanDirection
+	automaticTarget float64
 }
 
 // fastEntry references a snapshot battery for the per-tick selection working set.
@@ -130,6 +139,28 @@ func (site *Site) batteryFastTick() {
 
 	if site.batteryStopped == nil {
 		site.batteryStopped = make(map[string]int)
+	}
+
+	// optimizer automatic mode: execute its fixed instruction instead of computing a target
+	// from live meters - skips the meter reads/guards below entirely, since a slot-level
+	// target doesn't depend on their freshness. Force a guard resync for whenever
+	// solar-following next resumes, so a stale comparison doesn't wrongly skip its first tick.
+	if snap.automatic {
+		site.batteryGuardValid = false
+
+		direction := site.batteryArbitrateDirection(snap.automaticDir)
+		switch direction {
+		case batteryPlanCharge:
+			site.fastControl(snap, batteryPlanCharge, snap.automaticTarget)
+		case batteryPlanDischarge:
+			site.fastControl(snap, batteryPlanDischarge, snap.automaticTarget)
+		default:
+			site.stopBatteries(fastEntriesAll(snap))
+			site.batteryChargeActive, site.batteryDischargeActive = nil, nil
+			site.batteryChargeTier, site.batteryDischargeTier = 0, 0
+		}
+		site.batteryFastDirection = direction
+		return
 	}
 
 	gridPower, err := site.gridMeter.Instance().CurrentPower()

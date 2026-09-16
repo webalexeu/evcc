@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/evcc-io/evcc/api"
+	"github.com/evcc-io/evcc/core/types"
 	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/config"
 	"github.com/stretchr/testify/assert"
@@ -591,6 +592,51 @@ func TestBatteryChargeTaperCalibration(t *testing.T) {
 			site.fastControl(snap, batteryPlanCharge, 1000)
 
 			assert.InDelta(t, tt.wantPower, ctrl.lastCharge, 0.001)
+		})
+	}
+}
+
+// TestBatteryAutomaticTarget guards the optimizer-automatic-mode -> fast loop target
+// mapping: Charge/Discharge use the suggestion's watts, Hold/HoldCharge both mean a plain
+// 0W stop (both arise from the same "idle" solve state, only the labelled grid direction
+// differs), and Normal/no-suggestion/automatic-off all hand off to solar-following (ok=false).
+func TestBatteryAutomaticTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		automatic  bool
+		action     string
+		wantDir    batteryPlanDirection
+		wantTarget float64
+		wantOK     bool
+	}{
+		{"automatic off", false, "charge", batteryPlanIdle, 0, false},
+		{"charge", true, "charge", batteryPlanCharge, 456, true},
+		{"discharge", true, "discharge", batteryPlanDischarge, 789, true},
+		{"hold", true, "hold", batteryPlanIdle, 0, true},
+		{"holdcharge", true, "holdcharge", batteryPlanIdle, 0, true},
+		{"normal", true, "normal", batteryPlanIdle, 0, false},
+		{"no suggestion", true, "", batteryPlanIdle, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.automatic {
+				enableAutomatic(t)
+			}
+
+			bat := config.NewStaticDevice[api.Meter](config.Named{Name: "bat1"}, &mockMeter{})
+			site := &Site{batteryMeters: []config.Device[api.Meter]{bat}}
+
+			if tt.action != "" {
+				site.suggestions = map[string]types.Suggestion{
+					batteryKey("bat1"): {Action: tt.action, Charge: 456, Discharge: 789},
+				}
+			}
+
+			dir, target, ok := site.batteryAutomaticTarget()
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantDir, dir)
+			assert.InDelta(t, tt.wantTarget, target, 0.001)
 		})
 	}
 }
