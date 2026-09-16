@@ -9,6 +9,7 @@ import (
 	"github.com/evcc-io/evcc/api"
 	"github.com/evcc-io/evcc/core/keys"
 	"github.com/evcc-io/evcc/core/loadpoint"
+	"github.com/evcc-io/evcc/core/types"
 	"github.com/evcc-io/evcc/hems/hems"
 	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/config"
@@ -248,6 +249,8 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 		dischargeExcluded = loadpointPower
 	}
 
+	automaticDir, automaticTarget, automatic := site.batteryAutomaticTarget()
+
 	snap := &batterySnapshot{
 		enabled:           true,
 		pool:              site.batterySolarPool,
@@ -260,6 +263,9 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 		dischargeExcluded: dischargeExcluded,
 		threshold:         standbyPower + site.batteryControlDeadBand,
 		created:           time.Now(),
+		automatic:         automatic,
+		automaticDir:      automaticDir,
+		automaticTarget:   automaticTarget,
 	}
 
 	for _, dev := range site.batteryMeters {
@@ -332,7 +338,7 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 		res = keepUnlessModified(api.BatteryHold)
 	case site.Automatic():
 		// optimizer decides, replacing grid charge limit and discharge control
-		if mode, ok := site.batterySuggestionMode(); ok {
+		if _, mode, ok := site.batterySuggestion(); ok {
 			res = keepUnlessModified(mode)
 		} else if batteryModeModified(batMode) {
 			// no suggestion: release the battery
@@ -375,9 +381,11 @@ func (site *Site) unmodelledCharging() bool {
 	return false
 }
 
-// batterySuggestionMode returns the optimizer's mode for the first controllable battery.
+// batterySuggestion returns the optimizer's suggestion and parsed mode for the first
+// controllable battery, including the recommended charge/discharge watts the fast loop
+// uses to execute Charge/Discharge precisely instead of at rated power.
 // TODO apply per battery once the site tracks more than a single battery mode
-func (site *Site) batterySuggestionMode() (api.BatteryMode, bool) {
+func (site *Site) batterySuggestion() (types.Suggestion, api.BatteryMode, bool) {
 	for _, dev := range site.batteryMeters {
 		if dev == nil {
 			continue
@@ -392,13 +400,47 @@ func (site *Site) batterySuggestionMode() (api.BatteryMode, bool) {
 		if err != nil {
 			// unknown action, release the battery
 			site.log.DEBUG.Printf("battery %s: cannot apply suggestion %s", deviceTitleOrName(dev), s.Action)
-			return api.BatteryNormal, true
+			return *s, api.BatteryNormal, true
 		}
 
-		return mode, true
+		return *s, mode, true
 	}
 
-	return api.BatteryUnknown, false
+	return types.Suggestion{}, api.BatteryUnknown, false
+}
+
+// batteryAutomaticTarget resolves the optimizer's instruction for this cycle into a fast
+// loop direction/target, when automatic mode has a real (non-Normal) instruction. Hold and
+// HoldCharge both arise from the same "idle" solve state (near-zero charge and discharge) -
+// only the grid direction used to label them differs - so both map to a plain 0W stop
+// rather than one being treated as more permissive than the other. Normal, an unparseable
+// suggestion, or no suggestion at all all mean "hand off to solar-following" (ok=false).
+func (site *Site) batteryAutomaticTarget() (dir batteryPlanDirection, target float64, ok bool) {
+	if !site.Automatic() {
+		return batteryPlanIdle, 0, false
+	}
+
+	if site.unmodelledCharging() {
+		// the suggestion ignores loads the optimizer cannot model as storage
+		return batteryPlanIdle, 0, true
+	}
+
+	suggestion, mode, has := site.batterySuggestion()
+	if !has {
+		return batteryPlanIdle, 0, false
+	}
+
+	switch mode {
+	case api.BatteryCharge:
+		return batteryPlanCharge, math.Max(0, suggestion.Charge), true
+	case api.BatteryDischarge:
+		return batteryPlanDischarge, math.Max(0, suggestion.Discharge), true
+	case api.BatteryHold, api.BatteryHoldCharge:
+		return batteryPlanIdle, 0, true
+	default:
+		// Normal (or unparseable, mapped to Normal above): hand off to solar-following
+		return batteryPlanIdle, 0, false
+	}
 }
 
 // batterySocLimitReached reports whether the battery has reached the soc bound
