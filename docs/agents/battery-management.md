@@ -35,6 +35,21 @@ Each tick the system evaluates which mode to apply, in priority order:
 
 When enabled, the site drives `SetBatteryChargePower` / `SetBatteryDischargePower` on each battery every tick via the `BatteryPowerController` API. This gives watt-level control instead of binary charge/discharge.
 
+**Interaction with optimizer automatic mode** (`site.Automatic()`, from the andig optimizer-automatic-mode PR): when both are enabled, the fast loop stays the single execution path - `requiredBatteryMode`'s `batterySolarControl` case sits above both `Automatic()` cases, so RS485 ownership is never released just because the optimizer suggests Normal. What changes is where the fast loop's per-tick target comes from, resolved once per main-loop cycle by `batteryAutomaticTarget()` and carried on the snapshot (`automatic`/`automaticDir`/`automaticTarget`):
+
+| Optimizer instruction this cycle | Fast loop target |
+|---|---|
+| Normal, unparseable, or no suggestion yet | hand off - live solar-following target, unchanged (`automatic=false`) |
+| Charge | `suggestion.Charge` W, direction=charge |
+| Discharge | `suggestion.Discharge` W, direction=discharge |
+| Hold | 0W |
+| HoldCharge | 0W - arises from the same "idle" solve state as Hold (near-zero charge *and* discharge), just labelled from the opposite grid direction; not "discharge allowed, charge forbidden" |
+| `unmodelledCharging()` (EV fast-charging the optimizer can't model) | 0W, regardless of the suggestion |
+
+`batteryFastTick` checks `snap.automatic` before touching any live meter: a fixed slot-level target doesn't depend on grid/battery freshness, so the whole meter-guard machinery (stale-grid skip, skew check) is bypassed entirely for automatic-driven ticks - skipping the guard update would otherwise let a stale comparison wrongly pause the *next* solar-following tick, so `batteryGuardValid` is reset to force a clean resync whenever automatic mode lets go again. Tiering/pool/sticky/taper/per-battery caps all still apply on top of the automatic target exactly as they do for a solar-following one - the optimizer picks a site-total number, the existing selection logic decides which physical battery(ies) deliver it.
+
+With the optimizer off (`site.Automatic()` false), `batteryAutomaticTarget()` returns `ok=false` immediately and every byte of this is a no-op - `battery_loop`'s solar-following behavior is untouched.
+
 The `BatteryPowerController` (and `BatteryController` mode switching) for Marstek Venus is implemented natively in `meter/marstek.go`, which owns the Modbus connection and writes the RS485 control registers (`42000` enable, `42010` direction, `42020`/`42021` charge/discharge watts) directly in Go. The `marstek-venus-e-v3` template is a thin wrapper that renders `type: marstek`; keeping the register sequences in Go (rather than template setters) decouples the fast loop from upstream's Marstek template changes. Read registers are generation-specific (Gen 3: power `30006`, SoC `34002`×0.1); control registers are generation-independent.
 
 **Request pacing**: since the fast loop has no write-deadband (a full write sequence — enable, charge/discharge-W, direction — is reissued every tick as a watchdog heartbeat while a battery is active), an active battery sees ~4 Modbus round trips/second sustained. Marstek's RS485-over-network bridge has been observed to time out or refuse reconnects under that load with no inter-request gap. `NewMarstekFromConfig` builds its connection via `modbus.Settings.Connection()` (not the lower-level `NewConnection`) specifically so the device's `delay`/`timeout` YAML settings take effect, and defaults `delay` to `marstekDefaultDelay` (150ms) when unset — override per-device with `delay:` if a unit needs more or less pacing.
