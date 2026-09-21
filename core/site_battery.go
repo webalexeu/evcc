@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -480,6 +481,8 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		site.batteryModeApplied = make(map[string]api.BatteryMode)
 	}
 
+	var errs error
+
 	for _, dev := range site.batteryMeters {
 		meter := dev.Instance()
 
@@ -495,7 +498,9 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		if (fromToCharge || fromToDischarge) && deviceMode != api.BatteryHold {
 			hold, err := site.batterySocLimitReached(dev, fromToDischarge)
 			if err != nil && !errors.Is(err, api.ErrNotAvailable) {
-				return err
+				// don't let one device's error skip the mode update for the others
+				errs = errors.Join(errs, fmt.Errorf("%s: %w", deviceTitleOrName(dev), err))
+				continue
 			}
 			if hold {
 				deviceMode = api.BatteryHold
@@ -526,7 +531,8 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 
 		if err := batCtrl.SetBatteryMode(deviceMode); err != nil {
 			if !errors.Is(err, api.ErrNotAvailable) {
-				return err
+				// don't let one device's error skip the mode update for the others
+				errs = errors.Join(errs, fmt.Errorf("%s: %w", deviceTitleOrName(dev), err))
 			}
 			continue
 		}
@@ -535,7 +541,7 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		batteryLog.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), deviceMode)
 	}
 
-	return nil
+	return errs
 }
 
 func (site *Site) tariffRates(usage api.TariffUsage) (api.Rates, error) {
