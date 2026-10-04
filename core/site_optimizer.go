@@ -407,11 +407,11 @@ var errOptimizerNotReady = errors.New("battery measurements not ready")
 const optimizerInterval = 5 * time.Minute
 
 // optimizerUpdateAsync runs the optimizer unless the last run is younger than
-// the mode's interval. Pass force to run regardless, e.g. when a changed setting
-// should take effect immediately. It is a no-op when the optimizer is not
+// minAge. Pass 0 to force a run, e.g. when a changed setting should take effect
+// without waiting for the next slot. It is a no-op when the optimizer is not
 // active or a run is already in progress; the running update reflects the
-// change on its next run.
-func (site *Site) optimizerUpdateAsync(force bool) {
+// change on its next slot.
+func (site *Site) optimizerUpdateAsync(minAge time.Duration) {
 	if !sponsor.IsAuthorized() || !optimizerEnabled() {
 		return
 	}
@@ -421,15 +421,10 @@ func (site *Site) optimizerUpdateAsync(force bool) {
 	}
 	defer site.optimizerMu.Unlock()
 
-	interval := tariff.SlotDuration
-	if site.Automatic() {
-		interval = optimizerInterval
-	}
-
-	if force {
+	if minAge == 0 {
 		// keep the gate open so a not-ready run is retried on the next cycle
 		site.optimizerUpdated = time.Time{}
-	} else if time.Since(site.optimizerUpdated) < interval {
+	} else if time.Since(site.optimizerUpdated) < minAge {
 		return
 	}
 
@@ -447,14 +442,24 @@ func (site *Site) optimizerUpdateAsync(force bool) {
 
 		site.optimizerUpdated = time.Now()
 
-		// a failed run keeps the advice: dropping it would release the controlled
-		// devices for one cycle. reapplySuggestions expires the cached solve.
 		if err != nil {
 			site.log.ERROR.Println("optimizer:", err)
+
+			// stale advice must not linger
+			site.clearSuggestions()
 		}
 	}()
 
 	err = site.optimizerUpdate(site.state().battery.Devices)
+}
+
+
+// optimizerMinAge is how old the last run may be before the periodic loop runs the optimizer again
+func (site *Site) optimizerMinAge() time.Duration {
+	if site.Automatic() {
+		return optimizerInterval
+	}
+	return tariff.SlotDuration
 }
 
 // optimizerRequest assembles the optimizer request and the matching device

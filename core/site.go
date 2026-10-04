@@ -1603,7 +1603,7 @@ func (site *Site) loopLoadpoints(next chan<- updater) {
 
 	for {
 		// optimizer runs on its own cadence, checked once per loadpoint cycle
-		go site.optimizerUpdateAsync(false)
+		go site.optimizerUpdateAsync(site.optimizerMinAge())
 
 		if len(active) == 0 {
 			logOnce.Do(func() {
