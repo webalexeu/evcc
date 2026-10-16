@@ -169,6 +169,44 @@ func TestBatteryUnsupportedModeReleases(t *testing.T) {
 
 	// normal is already applied
 	assert.NoError(t, site.applyBatteryMode(api.BatteryHoldCharge))
+}
+
+// TestApplyBatteryModeContinuesAfterDeviceError guards that a mode-set error on
+// one battery does not skip the mode update for batteries later in the list
+// (issue #33916: a single flaky device left every subsequent device stuck).
+func TestApplyBatteryModeContinuesAfterDeviceError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	batConFailing := batteryControllerMock(ctrl)
+	batFailing := &struct {
+		api.Meter
+		api.BatteryController
+	}{
+		BatteryController: batConFailing,
+	}
+
+	batConOk := batteryControllerMock(ctrl)
+	batOk := &struct {
+		api.Meter
+		api.BatteryController
+	}{
+		BatteryController: batConOk,
+	}
+
+	site := &Site{
+		log: util.NewLogger("foo"),
+		batteryMeters: []config.Device[api.Meter]{
+			config.NewStaticDevice(config.Named{Name: "failing"}, api.Meter(batFailing)),
+			config.NewStaticDevice(config.Named{Name: "ok"}, api.Meter(batOk)),
+		},
+		batteryMode: api.BatteryNormal,
+	}
+
+	batConFailing.EXPECT().SetBatteryMode(api.BatteryHold).Return(errors.New("modbus timeout"))
+	batConOk.EXPECT().SetBatteryMode(api.BatteryHold).Times(1)
+
+	err := site.applyBatteryMode(api.BatteryHold)
+	assert.Error(t, err)
 
 	ctrl.Finish()
 }
@@ -587,4 +625,58 @@ func TestEvFastChargingActiveDisabledLoadpoint(t *testing.T) {
 	site := &Site{loadpoints: []*Loadpoint{nil}}
 
 	assert.False(t, site.evFastChargingActive())
+}
+
+type mockBatteryPowerController struct {
+	lastCharge float64
+}
+
+func (m *mockBatteryPowerController) SetBatteryChargePower(watts float64) error {
+	m.lastCharge = watts
+	return nil
+}
+
+func (m *mockBatteryPowerController) SetBatteryDischargePower(watts float64) error {
+	return nil
+}
+
+// TestBatteryChargeTaperCalibration guards that calibration charge (bypass maxSoc
+// to reach true 100%) still tapers when tapering is enabled - anchored to 100%,
+// not to the (possibly much lower) daily maxSoc a plain taper would use.
+func TestBatteryChargeTaperCalibration(t *testing.T) {
+	tests := []struct {
+		name        string
+		calibration bool
+		soc         float64
+		wantPower   float64
+	}{
+		{"no calibration, within taper band of maxSoc", false, 87, 600},       // (90-87)/5
+		{"no calibration, outside taper band", false, 80, 1000},               // untapered
+		{"calibration, below taper band of 100%", true, 87, 1000},             // untapered - taper anchors to 100, not maxSoc
+		{"calibration, within taper band of 100%", true, 97, 600},             // (100-97)/5
+		{"calibration, floors at chargeMinFactor near 100%", true, 99.9, 250}, // (100-99.9)/5=0.02 < 0.25 floor
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := &mockBatteryPowerController{}
+			snap := &batterySnapshot{
+				tapering:    true,
+				calibration: tt.calibration,
+				batteries: []batterySnapEntry{{
+					ctrl:        ctrl,
+					name:        "bat1",
+					soc:         tt.soc,
+					socOK:       true,
+					hasSocLimit: true,
+					maxSoc:      90,
+				}},
+			}
+
+			site := &Site{}
+			site.fastControl(snap, batteryPlanCharge, 1000)
+
+			assert.InDelta(t, tt.wantPower, ctrl.lastCharge, 0.001)
+		})
+	}
 }
