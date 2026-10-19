@@ -161,22 +161,22 @@ func (m *Marstek) Soc() (float64, error) {
 var _ api.BatteryCapacity = (*Marstek)(nil)
 
 // Capacity implements the api.BatteryCapacity interface
-func (m *Marstek) Capacity() float64 {
-	return m.capacity
+func (m *Marstek) Capacity() (float64, error) {
+	return m.capacity, nil
 }
 
 var _ api.BatterySocLimiter = (*Marstek)(nil)
 
 // GetSocLimits implements the api.BatterySocLimiter interface
-func (m *Marstek) GetSocLimits() (min, max float64) {
-	return m.minSoc, m.maxSoc
+func (m *Marstek) GetSocLimits() (min, max float64, err error) {
+	return m.minSoc, m.maxSoc, nil
 }
 
 var _ api.BatteryPowerLimiter = (*Marstek)(nil)
 
 // GetPowerLimits implements the api.BatteryPowerLimiter interface
-func (m *Marstek) GetPowerLimits() (charge, discharge float64) {
-	return m.chargeLimit, m.dischargeLimit
+func (m *Marstek) GetPowerLimits() (charge, discharge float64, err error) {
+	return m.chargeLimit, m.dischargeLimit, nil
 }
 
 var _ api.BatteryController = (*Marstek)(nil)
