@@ -256,6 +256,8 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 		tiering:           site.batterySolarTiering,
 		sticky:            site.batterySolarSticky,
 		tapering:          site.batterySolarTapering,
+		chargeAllowed:     site.batterySolarChargeAllowed,
+		dischargeAllowed:  site.batterySolarDischargeAllowed,
 		calibration:       site.batteryCalibrationCharge,
 		chargeOffset:      chargeOffset,
 		dischargeOffset:   residual,

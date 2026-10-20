@@ -73,6 +73,8 @@ type batterySnapshot struct {
 	tiering           bool
 	sticky            bool
 	tapering          bool
+	chargeAllowed     bool // direction gate: fast loop may charge from solar surplus
+	dischargeAllowed  bool // direction gate: fast loop may discharge to cover load
 	calibration       bool
 	chargeOffset      float64 // residual, or 0 below prioritySoc
 	dischargeOffset   float64 // residual
@@ -182,12 +184,15 @@ func (site *Site) batteryFastTick() {
 	dischargeTarget := battPower + gridPower + snap.dischargeOffset - snap.dischargeExcluded
 	chargeTarget := -battPower - (gridPower + snap.chargeOffset)
 
-	// desired direction from the fresh signal
+	// desired direction from the fresh signal, gated by the configured charge/discharge
+	// direction allowance - a disallowed direction simply leaves the battery idle rather
+	// than falling back to the other direction (there is nothing to charge from during a
+	// deficit, and nothing to discharge into during a surplus)
 	desired := batteryPlanIdle
 	switch {
-	case dischargeTarget > snap.threshold && dischargeTarget >= chargeTarget:
+	case snap.dischargeAllowed && dischargeTarget > snap.threshold && dischargeTarget >= chargeTarget:
 		desired = batteryPlanDischarge
-	case chargeTarget > snap.threshold:
+	case snap.chargeAllowed && chargeTarget > snap.threshold:
 		desired = batteryPlanCharge
 	}
 
