@@ -665,6 +665,44 @@ func (site *Site) SetBatterySolarTapering(val bool) error {
 	return nil
 }
 
+func (site *Site) GetBatterySolarChargeAllowed() bool {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batterySolarChargeAllowed
+}
+
+func (site *Site) SetBatterySolarChargeAllowed(val bool) error {
+	site.Lock()
+	defer site.Unlock()
+
+	if site.batterySolarChargeAllowed != val {
+		site.batterySolarChargeAllowed = val
+		settings.SetBool(keys.BatterySolarChargeAllowed, val)
+		site.publish(keys.BatterySolarChargeAllowed, val)
+	}
+
+	return nil
+}
+
+func (site *Site) GetBatterySolarDischargeAllowed() bool {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batterySolarDischargeAllowed
+}
+
+func (site *Site) SetBatterySolarDischargeAllowed(val bool) error {
+	site.Lock()
+	defer site.Unlock()
+
+	if site.batterySolarDischargeAllowed != val {
+		site.batterySolarDischargeAllowed = val
+		settings.SetBool(keys.BatterySolarDischargeAllowed, val)
+		site.publish(keys.BatterySolarDischargeAllowed, val)
+	}
+
+	return nil
+}
+
 // SetBatteryDischargeControl sets the battery control mode (no discharge only)
 func (site *Site) SetBatteryDischargeControl(val bool) error {
 	if site.Automatic() {

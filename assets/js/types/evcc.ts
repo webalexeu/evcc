@@ -302,6 +302,10 @@ export interface State {
   batterySolarControl?: boolean;
   batterySolarPool?: boolean;
   batterySolarTapering?: boolean;
+  /** Home battery is allowed to charge from solar surplus. */
+  batterySolarChargeAllowed?: boolean;
+  /** Home battery is allowed to discharge to cover load. */
+  batterySolarDischargeAllowed?: boolean;
   batteryCalibrationCharge?: boolean;
   batteryControlDeadBand?: number;
   /** Price or emission limit for charging the home battery from grid. */
