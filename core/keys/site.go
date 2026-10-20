@@ -60,10 +60,12 @@ const (
 	BufferSoc                  = "bufferSoc"
 	BufferStartSoc             = "bufferStartSoc"
 	// battery solar control sub-features
-	BatterySolarPool     = "batterySolarPool"
-	BatterySolarTiering  = "batterySolarTiering"
-	BatterySolarSticky   = "batterySolarSticky"
-	BatterySolarTapering = "batterySolarTapering"
+	BatterySolarPool             = "batterySolarPool"
+	BatterySolarTiering          = "batterySolarTiering"
+	BatterySolarSticky           = "batterySolarSticky"
+	BatterySolarTapering         = "batterySolarTapering"
+	BatterySolarChargeAllowed    = "batterySolarChargeAllowed"
+	BatterySolarDischargeAllowed = "batterySolarDischargeAllowed"
 
 	// grid settings
 	GridExportLimit = "gridExportLimit"

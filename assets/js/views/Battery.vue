@@ -111,6 +111,36 @@
 							</div>
 							<hr class="my-3" />
 							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.directionTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarChargeAllowed"
+									:checked="state.batterySolarChargeAllowed"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeChargeAllowed"
+								/>
+								<label class="form-check-label" for="batteryExpSolarChargeAllowed">
+									{{ $t("batterySettings.chargeAllowedLabel") }}
+								</label>
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarDischargeAllowed"
+									:checked="state.batterySolarDischargeAllowed"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeDischargeAllowed"
+								/>
+								<label class="form-check-label" for="batteryExpSolarDischargeAllowed">
+									{{ $t("batterySettings.dischargeAllowedLabel") }}
+								</label>
+							</div>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
 								{{ $t("batterySettings.calibrationTab") }}
 							</div>
 							<div class="form-check form-switch">
@@ -352,6 +382,24 @@ export default defineComponent({
 			try {
 				await api.post(
 					`batterysolartapering/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeChargeAllowed(e: Event) {
+			try {
+				await api.post(
+					`batterysolarchargeallowed/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeDischargeAllowed(e: Event) {
+			try {
+				await api.post(
+					`batterysolardischargeallowed/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
 				);
 			} catch (err) {
 				console.error(err);

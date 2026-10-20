@@ -87,32 +87,34 @@ type Site struct {
 	curtailPercent *int
 
 	// battery settings
-	prioritySoc               float64              // prefer battery up to this Soc
-	bufferSoc                 float64              // continue charging on battery above this Soc (EV loadpoints)
-	bufferStartSoc            float64              // start charging on battery above this Soc (EV loadpoints)
-	batteryDischargeControl   bool                 // prevent battery discharge for fast and planned charging
-	batterySolarControl       bool                 // actively charge from surplus / discharge to cover loads
-	batteryCalibrationCharge  bool                 // one-shot: bypass maxSoc and charge to 100% for LFP calibration (not persisted)
-	batteryControlDeadBand    float64              // minimum surplus/deficit (W) to start charge or discharge (stability dead band)
-	batteryGridChargeLimit    *float64             // grid charging limit
-	batteryGridDischargeLimit *float64             // grid discharging (feed-in) limit
-	batteryGridDischarge      bool                 // allow battery discharge to grid (experimental)
-	batterySolarPool          bool                 // distribute power equally across all batteries (no per-battery selection)
-	batterySolarTiering       bool                 // activate minimum number of batteries needed to stay above inverter's effective power floor
-	batterySolarSticky        bool                 // keep the same battery selection across ticks; swap only on significant SoC divergence
-	batterySolarTapering      bool                 // linearly reduce charge power in the last SoC band before maxSoc to protect cells
-	batteryChargeTier         int                  // tiered activation: current number of batteries charging (0 = uninitialised)
-	batteryDischargeTier      int                  // tiered activation: current number of batteries discharging (0 = uninitialised)
-	batteryChargeActive       []string             // sticky selection: names of batteries currently in the charge tier
-	batteryDischargeActive    []string             // sticky selection: names of batteries currently in the discharge tier
-	batteryStopped            map[string]int       // ticks since stop was last sent per battery; skips redundant re-stops
-	batteryPlanMu             sync.Mutex           // guards batterySnapshot and serializes snapshot build vs fast loop
-	batterySnapshot           *batterySnapshot     // main loop → fast loop contract (SoC/limits/caps + config, no power)
-	batteryFastDirection      batteryPlanDirection // direction the fast loop is currently committed to
-	batteryLastGrid           float64              // fast loop meter guard: previous grid reading
-	batteryLastBatt           float64              // fast loop meter guard: previous total battery reading
-	batteryGuardValid         bool                 // fast loop meter guard: previous readings are valid
-	batteryFlipSince          time.Time            // fast loop: when the opposite direction first became wanted
+	prioritySoc                  float64              // prefer battery up to this Soc
+	bufferSoc                    float64              // continue charging on battery above this Soc (EV loadpoints)
+	bufferStartSoc               float64              // start charging on battery above this Soc (EV loadpoints)
+	batteryDischargeControl      bool                 // prevent battery discharge for fast and planned charging
+	batterySolarControl          bool                 // actively charge from surplus / discharge to cover loads
+	batteryCalibrationCharge     bool                 // one-shot: bypass maxSoc and charge to 100% for LFP calibration (not persisted)
+	batteryControlDeadBand       float64              // minimum surplus/deficit (W) to start charge or discharge (stability dead band)
+	batteryGridChargeLimit       *float64             // grid charging limit
+	batteryGridDischargeLimit    *float64             // grid discharging (feed-in) limit
+	batteryGridDischarge         bool                 // allow battery discharge to grid (experimental)
+	batterySolarPool             bool                 // distribute power equally across all batteries (no per-battery selection)
+	batterySolarTiering          bool                 // activate minimum number of batteries needed to stay above inverter's effective power floor
+	batterySolarSticky           bool                 // keep the same battery selection across ticks; swap only on significant SoC divergence
+	batterySolarTapering         bool                 // linearly reduce charge power in the last SoC band before maxSoc to protect cells
+	batterySolarChargeAllowed    bool                 // fast loop may charge batteries from solar surplus
+	batterySolarDischargeAllowed bool                 // fast loop may discharge batteries to cover load
+	batteryChargeTier            int                  // tiered activation: current number of batteries charging (0 = uninitialised)
+	batteryDischargeTier         int                  // tiered activation: current number of batteries discharging (0 = uninitialised)
+	batteryChargeActive          []string             // sticky selection: names of batteries currently in the charge tier
+	batteryDischargeActive       []string             // sticky selection: names of batteries currently in the discharge tier
+	batteryStopped               map[string]int       // ticks since stop was last sent per battery; skips redundant re-stops
+	batteryPlanMu                sync.Mutex           // guards batterySnapshot and serializes snapshot build vs fast loop
+	batterySnapshot              *batterySnapshot     // main loop → fast loop contract (SoC/limits/caps + config, no power)
+	batteryFastDirection         batteryPlanDirection // direction the fast loop is currently committed to
+	batteryLastGrid              float64              // fast loop meter guard: previous grid reading
+	batteryLastBatt              float64              // fast loop meter guard: previous total battery reading
+	batteryGuardValid            bool                 // fast loop meter guard: previous readings are valid
+	batteryFlipSince             time.Time            // fast loop: when the opposite direction first became wanted
 
 	// grid settings
 	gridExportLimit float64 // static grid export power limit in W, 0 = disabled
@@ -522,6 +524,8 @@ func (site *Site) restoreSettings() error {
 	site.batterySolarTiering = true
 	site.batterySolarSticky = true
 	site.batterySolarTapering = true
+	site.batterySolarChargeAllowed = true
+	site.batterySolarDischargeAllowed = true
 	if v, err := settings.Bool(keys.BatterySolarPool); err == nil {
 		site.batterySolarPool = v
 	}
@@ -533,6 +537,12 @@ func (site *Site) restoreSettings() error {
 	}
 	if v, err := settings.Bool(keys.BatterySolarTapering); err == nil {
 		site.batterySolarTapering = v
+	}
+	if v, err := settings.Bool(keys.BatterySolarChargeAllowed); err == nil {
+		site.batterySolarChargeAllowed = v
+	}
+	if v, err := settings.Bool(keys.BatterySolarDischargeAllowed); err == nil {
+		site.batterySolarDischargeAllowed = v
 	}
 	if v, err := settings.Float(keys.ResidualPower); err == nil {
 		if err := site.SetResidualPower(v); err != nil {
@@ -1550,6 +1560,8 @@ func (site *Site) prepare() {
 	site.publish(keys.BatterySolarTiering, site.batterySolarTiering)
 	site.publish(keys.BatterySolarSticky, site.batterySolarSticky)
 	site.publish(keys.BatterySolarTapering, site.batterySolarTapering)
+	site.publish(keys.BatterySolarChargeAllowed, site.batterySolarChargeAllowed)
+	site.publish(keys.BatterySolarDischargeAllowed, site.batterySolarDischargeAllowed)
 	site.publish(keys.ResidualPower, site.GetResidualPower())
 	site.publish(keys.GridExportLimit, site.GetGridExportLimit())
 	site.publish(keys.ProfilePercentile, site.GetProfilePercentile())
