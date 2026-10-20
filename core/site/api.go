@@ -141,6 +141,12 @@ type API interface {
 	GetBatterySolarTapering() bool
 	SetBatterySolarTapering(bool) error
 
+	GetBatterySolarChargeAllowed() bool
+	SetBatterySolarChargeAllowed(bool) error
+
+	GetBatterySolarDischargeAllowed() bool
+	SetBatterySolarDischargeAllowed(bool) error
+
 	//
 	// battery control external
 	//
