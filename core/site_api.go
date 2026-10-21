@@ -703,6 +703,31 @@ func (site *Site) SetBatterySolarDischargeAllowed(val bool) error {
 	return nil
 }
 
+// GetBatteryHighLoadProtection returns whether the battery may discharge to relieve the
+// site's root circuit when it is at or above its configured current limit, even while
+// batterySolarDischargeAllowed is off.
+func (site *Site) GetBatteryHighLoadProtection() bool {
+	site.RLock()
+	defer site.RUnlock()
+	return site.batteryHighLoadProtection
+}
+
+// SetBatteryHighLoadProtection enables/disables the high-load discharge override. It only has
+// an effect when a root circuit with a meter and a configured max current exists
+// (see batteryHighLoadProtectionActive).
+func (site *Site) SetBatteryHighLoadProtection(val bool) error {
+	site.Lock()
+	defer site.Unlock()
+
+	if site.batteryHighLoadProtection != val {
+		site.batteryHighLoadProtection = val
+		settings.SetBool(keys.BatteryHighLoadProtection, val)
+		site.publish(keys.BatteryHighLoadProtection, val)
+	}
+
+	return nil
+}
+
 // SetBatteryDischargeControl sets the battery control mode (no discharge only)
 func (site *Site) SetBatteryDischargeControl(val bool) error {
 	if site.Automatic() {

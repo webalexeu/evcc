@@ -66,6 +66,7 @@ const (
 	BatterySolarTapering         = "batterySolarTapering"
 	BatterySolarChargeAllowed    = "batterySolarChargeAllowed"
 	BatterySolarDischargeAllowed = "batterySolarDischargeAllowed"
+	BatteryHighLoadProtection    = "batteryHighLoadProtection"
 
 	// grid settings
 	GridExportLimit = "gridExportLimit"
