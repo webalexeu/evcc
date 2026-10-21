@@ -147,6 +147,9 @@ type API interface {
 	GetBatterySolarDischargeAllowed() bool
 	SetBatterySolarDischargeAllowed(bool) error
 
+	GetBatteryHighLoadProtection() bool
+	SetBatteryHighLoadProtection(bool) error
+
 	//
 	// battery control external
 	//

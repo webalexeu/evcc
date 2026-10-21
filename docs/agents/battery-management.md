@@ -244,6 +244,37 @@ If neither `dischargeTarget` nor `chargeTarget` exceeds `snap.threshold` (`stand
 
 ---
 
+## 11.1 High Load Protection (`batteryHighLoadProtection`)
+
+A second, independent override of the discharge direction gate (§3.2/§16), for when `batterySolarDischargeAllowed` is off but the household's main circuit is approaching its fuse rating. Toggleable via `POST /batteryhighloadprotection/{bool}`, or the "Allow discharge to protect against high load" switch next to `dischargeAllowedLabel` on the Battery page. Default: **false**.
+
+```go
+dischargeAllowed: site.batterySolarDischargeAllowed || site.batteryHighLoadProtectionActive()
+```
+
+`batteryHighLoadProtectionActive()` (`site_battery.go`) deliberately **reuses the root load-management circuit** (`site.circuit`, `core/circuit`) instead of introducing a second limit:
+
+```go
+return site.batteryHighLoadProtection &&
+    site.circuit != nil && site.circuit.HasMeter() &&
+    site.circuit.GetMaxCurrent() > 0 &&
+    site.circuit.GetMaxPhaseCurrent() >= site.circuit.GetMaxCurrent()
+```
+
+- Requires a root circuit with a real meter and a configured max current (`GetMaxCurrent() > 0`, the same "unconfigured = unlimited" convention `effectiveMaxPower` uses) — the toggle is a no-op without one.
+- `GetMaxPhaseCurrent()` is the **worst of the circuit's three phase currents**, already read once per main-loop cycle by `updateCircuits()` ([`core/site_circuits.go`](../../core/site_circuits.go)) before `updateBatteryMode()` runs — same cadence and the same "max of 3 phases vs. one limit" model `core/circuit` already uses for throttling loadpoints (see `Circuit.updateMeters`). No new meter read, no new per-phase threshold config.
+- Evaluated in the main loop only (not the 1 s fast loop): it flips `dischargeAllowed` in the snapshot, so it reacts on the main loop's cadence, not every tick. Cheap, but not instant — acceptable since breaker trip curves tolerate overload for a few seconds; revisit if real-world testing shows it isn't fast enough.
+
+**Known limitation — not truly per-phase.** This triggers on the circuit's *worst* phase but discharges batteries globally; it doesn't route power to a specific phase. For a single-phase battery inverter, this only actually relieves the overloaded phase when the battery happens to be wired to it — there is no concept of "which phase a battery is on" anywhere in the config model today. A genuine per-phase version would need:
+1. A phase field on battery device config (which leg each inverter feeds), and
+2. Routing discharge preferentially to batteries on the overloaded phase instead of (or in addition to) the pooled/tiered selection in `fastControl`.
+
+Both are deferred; this implementation intentionally keeps the simple global form so it has an obvious, low-risk upgrade path once that data exists, rather than inventing a parallel per-phase config surface now.
+
+**Relationship to `core/circuit`:** circuits already throttle *consumption* (loadpoints) to stay under this same limit; this feature is the mirror-image mitigation on the *production* side (discharge the battery instead of/in addition to throttling EVs) for loads a circuit can't throttle away (ovens, induction hobs, other fixed appliances). It intentionally does not reach into `core/circuit` to command anything — it only reads the circuit's existing measurement and limit — so there's no new dependency from circuits to batteries. Fully folding battery discharge into `Circuit.Update()` as a first-class mitigation (so e.g. non-root circuits could trigger it too) is the natural next step if this needs to grow beyond "read the root circuit's worst phase."
+
+---
+
 ## 12. Grid Charge (`batteryGridChargeLimit`)
 
 When the current grid tariff price is at or below this limit, forces Charge mode (charges battery from grid at rated power). Useful for time-of-use tariffs.
@@ -348,6 +379,7 @@ Both add back the measured battery power, so they are **ramp-invariant** (this w
 | `batterySolarTapering` | POST `/batterysolartapering/{bool}` | `batterySolarTapering` | true | Taper charge power near maxSoc to protect battery health |
 | `batteryControlDeadBand` | POST `/batterycontroldeadband/{W}` | `batteryControlDeadBand` | 0 | Extra dead band before starting charge/discharge |
 | `batteryDischargeControl` | POST `/batterydischargecontrol/{bool}` | `batteryDischargeControl` | false | Prevent discharge during fast/smart charging |
+| `batteryHighLoadProtection` | POST `/batteryhighloadprotection/{bool}` | — | false | Allow discharge to relieve the root circuit when it is at/above its max current, overriding `batterySolarDischargeAllowed` |
 | `batteryGridChargeLimit` | POST `/batterygridchargelimit/{price}` | `batteryGridChargeLimit` | null | Charge from grid when tariff ≤ this price |
 | `batteryMode` | POST `/batterymode/{mode}` | `batteryMode` | normal | External mode override (normal/hold/charge) |
 | `prioritySoc` | POST `/prioritysoc/{%}` | `prioritySoc` | 0 | Battery charging priority threshold |
