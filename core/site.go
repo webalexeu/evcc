@@ -103,6 +103,7 @@ type Site struct {
 	batterySolarTapering         bool                 // linearly reduce charge power in the last SoC band before maxSoc to protect cells
 	batterySolarChargeAllowed    bool                 // fast loop may charge batteries from solar surplus
 	batterySolarDischargeAllowed bool                 // fast loop may discharge batteries to cover load
+	batteryHighLoadProtection    bool                 // override dischargeAllowed when the root circuit is at/above its current limit
 	batteryChargeTier            int                  // tiered activation: current number of batteries charging (0 = uninitialised)
 	batteryDischargeTier         int                  // tiered activation: current number of batteries discharging (0 = uninitialised)
 	batteryChargeActive          []string             // sticky selection: names of batteries currently in the charge tier
@@ -543,6 +544,9 @@ func (site *Site) restoreSettings() error {
 	}
 	if v, err := settings.Bool(keys.BatterySolarDischargeAllowed); err == nil {
 		site.batterySolarDischargeAllowed = v
+	}
+	if v, err := settings.Bool(keys.BatteryHighLoadProtection); err == nil {
+		site.batteryHighLoadProtection = v
 	}
 	if v, err := settings.Float(keys.ResidualPower); err == nil {
 		if err := site.SetResidualPower(v); err != nil {
@@ -1562,6 +1566,7 @@ func (site *Site) prepare() {
 	site.publish(keys.BatterySolarTapering, site.batterySolarTapering)
 	site.publish(keys.BatterySolarChargeAllowed, site.batterySolarChargeAllowed)
 	site.publish(keys.BatterySolarDischargeAllowed, site.batterySolarDischargeAllowed)
+	site.publish(keys.BatteryHighLoadProtection, site.batteryHighLoadProtection)
 	site.publish(keys.ResidualPower, site.GetResidualPower())
 	site.publish(keys.GridExportLimit, site.GetGridExportLimit())
 	site.publish(keys.ProfilePercentile, site.GetProfilePercentile())

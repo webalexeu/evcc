@@ -328,6 +328,8 @@ export interface State {
   batterySolarChargeAllowed?: boolean;
   /** Home battery is allowed to discharge to cover load. */
   batterySolarDischargeAllowed?: boolean;
+  /** Home battery may discharge to relieve the main circuit even when batterySolarDischargeAllowed is off. */
+  batteryHighLoadProtection?: boolean;
   batteryCalibrationCharge?: boolean;
   batteryControlDeadBand?: number;
   /** Price or emission limit for charging the home battery from grid. */

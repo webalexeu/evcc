@@ -195,6 +195,7 @@ func (s *HTTPd) RegisterSiteHandlers(site site.API) {
 		"batterysolartapering":            {"POST", "/batterysolartapering/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarTapering, site.GetBatterySolarTapering)},
 		"batterysolarchargeallowed":       {"POST", "/batterysolarchargeallowed/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarChargeAllowed, site.GetBatterySolarChargeAllowed)},
 		"batterysolardischargeallowed":    {"POST", "/batterysolardischargeallowed/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarDischargeAllowed, site.GetBatterySolarDischargeAllowed)},
+		"batteryhighloadprotection":       {"POST", "/batteryhighloadprotection/{value:[01truefalse]+}", boolHandler(site.SetBatteryHighLoadProtection, site.GetBatteryHighLoadProtection)},
 		"batterygridcharge":               {"POST", "/batterygridchargelimit/{value:-?[0-9.]+}", floatPtrHandler(site.SetBatteryGridChargeLimit, site.GetBatteryGridChargeLimit)},
 		"batterygridchargedelete":         {"DELETE", "/batterygridchargelimit", floatPtrHandler(site.SetBatteryGridChargeLimit, site.GetBatteryGridChargeLimit)},
 		"batterygriddischargelimit":       {"POST", "/batterygriddischargelimit/{value:-?[0-9.]+}", floatPtrHandler(site.SetBatteryGridDischargeLimit, site.GetBatteryGridDischargeLimit)},
