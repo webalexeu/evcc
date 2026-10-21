@@ -98,6 +98,8 @@
     "dischargeAllowedLabel": "Allow battery discharge to cover load.",
     "gridChargeTab": "Grid charging",
     "gridDischargeTab": "Grid discharging",
+    "highLoadProtectionDesc": "Overrides the setting above: lets the battery discharge whenever the configured circuit is at or above its current limit, to relieve it. Requires a circuit with a meter and a max current set under Load management.",
+    "highLoadProtectionLabel": "Allow discharge to protect against high load.",
     "modalTitle": "Home Battery",
     "noBattery": "No batteries configured.",
     "taperingLabel": "Reduce charge power in the last SoC band before max SoC to protect battery health.",

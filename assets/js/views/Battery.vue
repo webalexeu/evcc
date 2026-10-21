@@ -135,10 +135,29 @@
 									role="switch"
 									@change="changeDischargeAllowed"
 								/>
-								<label class="form-check-label" for="batteryExpSolarDischargeAllowed">
+								<label
+									class="form-check-label"
+									for="batteryExpSolarDischargeAllowed"
+								>
 									{{ $t("batterySettings.dischargeAllowedLabel") }}
 								</label>
 							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpHighLoadProtection"
+									:checked="state.batteryHighLoadProtection"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeHighLoadProtection"
+								/>
+								<label class="form-check-label" for="batteryExpHighLoadProtection">
+									{{ $t("batterySettings.highLoadProtectionLabel") }}
+								</label>
+							</div>
+							<p class="text-muted mt-1">
+								{{ $t("batterySettings.highLoadProtectionDesc") }}
+							</p>
 							<hr class="my-3" />
 							<div class="fw-bold mb-2">
 								{{ $t("batterySettings.calibrationTab") }}
@@ -400,6 +419,15 @@ export default defineComponent({
 			try {
 				await api.post(
 					`batterysolardischargeallowed/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeHighLoadProtection(e: Event) {
+			try {
+				await api.post(
+					`batteryhighloadprotection/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
 				);
 			} catch (err) {
 				console.error(err);
