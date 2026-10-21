@@ -49,6 +49,9 @@ const (
 
 	// battery settings
 	BatteryDischargeControl    = "batteryDischargeControl"
+	BatterySolarControl        = "batterySolarControl"
+	BatteryCalibrationCharge   = "batteryCalibrationCharge"
+	BatteryControlDeadBand     = "batteryControlDeadBand"
 	BatteryGridChargeLimit     = "batteryGridChargeLimit"
 	BatteryGridChargeActive    = "batteryGridChargeActive"
 	BatteryGridDischargeLimit  = "batteryGridDischargeLimit"
@@ -56,6 +59,14 @@ const (
 	BatteryGridDischarge       = "batteryGridDischarge"
 	BufferSoc                  = "bufferSoc"
 	BufferStartSoc             = "bufferStartSoc"
+	// battery solar control sub-features
+	BatterySolarPool             = "batterySolarPool"
+	BatterySolarTiering          = "batterySolarTiering"
+	BatterySolarSticky           = "batterySolarSticky"
+	BatterySolarTapering         = "batterySolarTapering"
+	BatterySolarChargeAllowed    = "batterySolarChargeAllowed"
+	BatterySolarDischargeAllowed = "batterySolarDischargeAllowed"
+	BatteryHighLoadProtection    = "batteryHighLoadProtection"
 
 	// grid settings
 	GridExportLimit = "gridExportLimit"
