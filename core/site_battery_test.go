@@ -722,3 +722,49 @@ func TestBatteryChargeTaperCalibration(t *testing.T) {
 		})
 	}
 }
+
+// TestBatteryHighLoadProtectionActive guards the discharge-override gate used by
+// buildBatterySnapshot: it must stay off unless explicitly enabled, a root circuit with a
+// meter is configured, that circuit has a real (>0) max current, and the measured worst-phase
+// current has reached it.
+func TestBatteryHighLoadProtectionActive(t *testing.T) {
+	tests := []struct {
+		name            string
+		enabled         bool
+		noCircuit       bool
+		hasMeter        bool
+		maxCurrent      float64
+		measuredCurrent float64
+		want            bool
+	}{
+		{"disabled", false, false, true, 20, 25, false},
+		{"no circuit", true, true, true, 20, 25, false},
+		{"circuit without meter", true, false, false, 20, 25, false},
+		{"no configured limit", true, false, true, 0, 25, false},
+		{"below limit", true, false, true, 20, 15, false},
+		{"at limit", true, false, true, 20, 20, true},
+		{"above limit", true, false, true, 20, 25, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+
+			site := &Site{batteryHighLoadProtection: tt.enabled}
+
+			if !tt.noCircuit {
+				circuit := api.NewMockCircuit(ctrl)
+				circuit.EXPECT().HasMeter().Return(tt.hasMeter).AnyTimes()
+				if tt.hasMeter {
+					circuit.EXPECT().GetMaxCurrent().Return(tt.maxCurrent).AnyTimes()
+					if tt.maxCurrent > 0 {
+						circuit.EXPECT().GetMaxPhaseCurrent().Return(tt.measuredCurrent).AnyTimes()
+					}
+				}
+				site.circuit = circuit
+			}
+
+			assert.Equal(t, tt.want, site.batteryHighLoadProtectionActive())
+		})
+	}
+}

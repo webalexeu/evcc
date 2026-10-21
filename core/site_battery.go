@@ -257,7 +257,7 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 		sticky:            site.batterySolarSticky,
 		tapering:          site.batterySolarTapering,
 		chargeAllowed:     site.batterySolarChargeAllowed,
-		dischargeAllowed:  site.batterySolarDischargeAllowed,
+		dischargeAllowed:  site.batterySolarDischargeAllowed || site.batteryHighLoadProtectionActive(),
 		calibration:       site.batteryCalibrationCharge,
 		chargeOffset:      chargeOffset,
 		dischargeOffset:   residual,
@@ -301,6 +301,25 @@ func (site *Site) buildBatterySnapshot(rate api.Rate) {
 
 	batteryLog.TRACE.Printf("battery snapshot: %d batteries soc=%.0f%% chargeOff=%.0fW dischargeOff=%.0fW excl=%.0fW boost=%.0fW threshold=%.0fW",
 		len(snap.batteries), site.battery.Soc, chargeOffset, residual, dischargeExcluded, boostPower, snap.threshold)
+}
+
+// batteryHighLoadProtectionActive reports whether the battery should be allowed to discharge
+// to relieve the site's root circuit, overriding batterySolarDischargeAllowed when it is off.
+// It piggybacks on the existing load-management circuit (the one the user already sized to
+// their main fuse) rather than introducing a second, separate limit: true once the circuit's
+// worst measured phase current is at or above its configured max current.
+//
+// This is intentionally the same "worst of three phases vs. one limit" model core/circuit
+// already uses (see Circuit.updateMeters), not a genuinely per-phase one, and a global rather
+// than a per-battery check: a single-phase battery only actually relieves the overloaded phase
+// when it happens to be wired to it, which isn't tracked anywhere today. A future per-phase
+// version would need each battery's wired phase before this check could target it specifically.
+func (site *Site) batteryHighLoadProtectionActive() bool {
+	if !site.batteryHighLoadProtection || site.circuit == nil || !site.circuit.HasMeter() {
+		return false
+	}
+	maxCurrent := site.circuit.GetMaxCurrent()
+	return maxCurrent > 0 && site.circuit.GetMaxPhaseCurrent() >= maxCurrent
 }
 
 // requiredBatteryMode determines required battery mode based on grid charge/discharge and rate
