@@ -405,6 +405,20 @@ func (mr *MockAPIMockRecorder) GetEnableThreshold() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEnableThreshold", reflect.TypeOf((*MockAPI)(nil).GetEnableThreshold))
 }
 
+// GetForceDim mocks base method.
+func (m *MockAPI) GetForceDim() *bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetForceDim")
+	ret0, _ := ret[0].(*bool)
+	return ret0
+}
+
+// GetForceDim indicates an expected call of GetForceDim.
+func (mr *MockAPIMockRecorder) GetForceDim() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetForceDim", reflect.TypeOf((*MockAPI)(nil).GetForceDim))
+}
+
 // GetLimitEnergy mocks base method.
 func (m *MockAPI) GetLimitEnergy() float64 {
 	m.ctrl.T.Helper()
@@ -1025,6 +1039,18 @@ func (m *MockAPI) SetEnableThreshold(threshold float64) {
 func (mr *MockAPIMockRecorder) SetEnableThreshold(threshold any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetEnableThreshold", reflect.TypeOf((*MockAPI)(nil).SetEnableThreshold), threshold)
+}
+
+// SetForceDim mocks base method.
+func (m *MockAPI) SetForceDim(enable bool) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetForceDim", enable)
+}
+
+// SetForceDim indicates an expected call of SetForceDim.
+func (mr *MockAPIMockRecorder) SetForceDim(enable any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetForceDim", reflect.TypeOf((*MockAPI)(nil).SetForceDim), enable)
 }
 
 // SetLimitEnergy mocks base method.

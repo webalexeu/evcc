@@ -783,6 +783,29 @@ func (lp *Loadpoint) SetBatteryBoostLimit(limit int) {
 	}
 }
 
+// GetForceDim returns the manual dim override state. nil means the API was never used.
+func (lp *Loadpoint) GetForceDim() *bool {
+	lp.RLock()
+	defer lp.RUnlock()
+	return lp.forceDim
+}
+
+// SetForceDim sets a manual override that forces the charger to dim, independent of
+// any HEMS/§14a signal. Disabling it returns control to that signal; it never forces
+// the charger to undim against an active HEMS/§14a limit.
+func (lp *Loadpoint) SetForceDim(enable bool) {
+	lp.Lock()
+	defer lp.Unlock()
+
+	lp.log.DEBUG.Println("set force dim:", enable)
+
+	if lp.forceDim == nil || *lp.forceDim != enable {
+		lp.forceDim = &enable
+		lp.publish(keys.ForceDim, enable)
+		lp.requestUpdate()
+	}
+}
+
 // HasChargeMeter determines if a physical charge meter is attached
 func (lp *Loadpoint) HasChargeMeter() bool {
 	return lp.chargeMeter != nil && lp.chargeMeter.fake == nil

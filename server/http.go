@@ -283,6 +283,7 @@ func (s *HTTPd) RegisterSiteHandlers(site site.API) {
 			"priority":                  {"POST", "/priority/{value:[0-9]+}", intHandler(pass(lp.SetPriority), lp.GetPriority)},
 			"batteryBoost":              {"POST", "/batteryboost/{value:[01truefalse]+}", boolHandler(lp.SetBatteryBoost, func() bool { return lp.GetBatteryBoost() > 0 })},
 			"batteryBoostLimit":         {"POST", "/batteryboostlimit/{value:[0-9]+}", intHandler(pass(lp.SetBatteryBoostLimit), lp.GetBatteryBoostLimit)},
+			"forceDim":                  {"POST", "/forcedim/{value:[01truefalse]+}", boolHandler(pass(lp.SetForceDim), func() bool { forced := lp.GetForceDim(); return forced != nil && *forced })},
 		}
 
 		for _, r := range routes {
