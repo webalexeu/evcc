@@ -356,6 +356,19 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/IntegerResult"
+  /loadpoints/{id}/forcedim/{enable}:
+    post:
+      operationId: setLoadpointForceDim
+      summary: Set manual dim override
+      description: "Force a Dimmer-capable charger (e.g. a heat pump) to dim, independent of any HEMS/§14a signal. Disabling it returns control to that signal; it never forces the charger to undim against an active HEMS/§14a limit."
+      tags:
+        - loadpoints
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - $ref: "#/components/parameters/enable"
+      responses:
+        "200":
+          $ref: "#/components/responses/BooleanResult"
   /loadpoints/{id}/disable/delay/{delay}:
     post:
       operationId: setLoadpointDisableDelay

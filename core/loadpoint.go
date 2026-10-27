@@ -31,6 +31,7 @@ import (
 	"github.com/evcc-io/evcc/util/grid"
 	"github.com/evcc-io/evcc/util/modbus"
 	"github.com/evcc-io/evcc/util/telemetry"
+	"github.com/samber/lo"
 )
 
 const (
@@ -130,6 +131,7 @@ type Loadpoint struct {
 	smartFeedInPriorityLimit *float64 // prevent charging if feed-in cost is above this value
 	batteryBoost             int      // battery boost state
 	batteryBoostLimit        int      // battery boost soc limit (0-100, 100=disabled)
+	forceDim                 *bool    // manual dim override via API; nil = untouched, never overrides HEMS to undim
 
 	mode                api.ChargeMode
 	alwaysCharge        api.AlwaysCharge // smart mode: charge continuously at least at min power
@@ -2548,18 +2550,34 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 			return
 		}
 
-		if dim != nil {
-			if *dim != dimmed {
-				if err := dimmer.Dim(*dim); err != nil {
+		// a manual API override behaves like an additional dim signal, but forcing dim
+		// off never beats an active HEMS/§14a signal: that's a compliance constraint,
+		// not a preference
+		forced := lp.GetForceDim()
+		want := dim
+		if want == nil {
+			want = forced
+		}
+		if forced != nil && *forced {
+			want = lo.ToPtr(true)
+		}
+
+		if want != nil {
+			if *want != dimmed {
+				if err := dimmer.Dim(*want); err != nil {
 					lp.log.ERROR.Printf("dim: %v", err)
 					return
 				}
 
-				lp.publish(keys.Dimmed, *dim)
-				lp.log.INFO.Printf("§14a dim: %t", *dim)
+				lp.publish(keys.Dimmed, *want)
+				cause := "§14a"
+				if forced != nil && *forced {
+					cause = "api"
+				}
+				lp.log.INFO.Printf("%s dim: %t", cause, *want)
 			}
 
-			if *dim {
+			if *want {
 				return
 			}
 		}
