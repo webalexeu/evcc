@@ -2555,11 +2555,14 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 		// not a preference
 		forced := lp.GetForceDim()
 		want := dim
-		if want == nil {
+		cause := "§14a"
+		if want == nil && forced != nil {
 			want = forced
+			cause = "api"
 		}
 		if forced != nil && *forced {
 			want = lo.ToPtr(true)
+			cause = "api"
 		}
 
 		if want != nil {
@@ -2570,10 +2573,6 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 				}
 
 				lp.publish(keys.Dimmed, *want)
-				cause := "§14a"
-				if forced != nil && *forced {
-					cause = "api"
-				}
 				lp.log.INFO.Printf("%s dim: %t", cause, *want)
 			}
 
