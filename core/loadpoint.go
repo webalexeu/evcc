@@ -1523,6 +1523,23 @@ func (lp *Loadpoint) circuitAllowsPhases(phases int, minCurrent float64) bool {
 	return true
 }
 
+// circuitAtLimit reports whether the loadpoint's circuit has no headroom left to grow
+// the current charge power or current. Checked independently of any HEMS/§14a signal:
+// the root circuit may still have capacity while this loadpoint's own branch is saturated.
+func (lp *Loadpoint) circuitAtLimit() bool {
+	if lp.circuit == nil {
+		return false
+	}
+
+	powerProbe := lp.chargePower + 1
+	if lp.circuit.ValidatePower(lp.chargePower, powerProbe) < powerProbe {
+		return true
+	}
+
+	currentProbe := lp.actualMaxChargeCurrent() + 1
+	return lp.circuit.ValidateCurrent(lp.actualMaxChargeCurrent(), currentProbe) < currentProbe
+}
+
 // fastCharging scales to 3p if available and sets maximum current
 func (lp *Loadpoint) fastCharging() error {
 	waiting, err := lp.fastChargingPhases()
@@ -2562,15 +2579,26 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 			return
 		}
 
-		// a manual API override behaves like an additional dim signal, but forcing dim
-		// off never beats an active HEMS/§14a signal: that's a compliance constraint,
-		// not a preference
+		// a manual API override and a saturated circuit both behave like additional dim
+		// signals, but forcing dim off never beats an active HEMS/§14a signal: that's a
+		// compliance constraint, not a preference. An undimmed heatpump may keep drawing
+		// power on its own judgment regardless of the offered max power, so a saturated
+		// circuit is checked independently of §14a too.
 		forced := lp.GetForceDim()
+		circuitLimited := lp.circuitAtLimit()
 		want := dim
 		cause := "§14a"
 		if want == nil && forced != nil {
 			want = forced
 			cause = "api"
+		}
+		if want == nil && lp.circuit != nil {
+			want = lo.ToPtr(false)
+			cause = "circuit"
+		}
+		if circuitLimited {
+			want = lo.ToPtr(true)
+			cause = "circuit"
 		}
 		if forced != nil && *forced {
 			want = lo.ToPtr(true)
