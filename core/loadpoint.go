@@ -2570,11 +2570,14 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 		// power on its own judgment regardless of the offered max power
 		circuitLimited := lp.circuitAtLimit()
 		want := dim
+		cause := "§14a"
 		if want == nil && lp.circuit != nil {
 			want = lo.ToPtr(false)
+			cause = "circuit"
 		}
 		if circuitLimited {
 			want = lo.ToPtr(true)
+			cause = "circuit"
 		}
 
 		if want != nil {
@@ -2585,10 +2588,6 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 				}
 
 				lp.publish(keys.Dimmed, *want)
-				cause := "§14a"
-				if circuitLimited {
-					cause = "circuit"
-				}
 				lp.log.INFO.Printf("%s dim: %t", cause, *want)
 			}
 
