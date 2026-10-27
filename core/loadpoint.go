@@ -31,6 +31,7 @@ import (
 	"github.com/evcc-io/evcc/util/grid"
 	"github.com/evcc-io/evcc/util/modbus"
 	"github.com/evcc-io/evcc/util/telemetry"
+	"github.com/samber/lo"
 )
 
 const (
@@ -1509,6 +1510,23 @@ func (lp *Loadpoint) circuitAllowsPhases(phases int, minCurrent float64) bool {
 	return true
 }
 
+// circuitAtLimit reports whether the loadpoint's circuit has no headroom left to grow
+// the current charge power or current. Checked independently of any HEMS/§14a signal:
+// the root circuit may still have capacity while this loadpoint's own branch is saturated.
+func (lp *Loadpoint) circuitAtLimit() bool {
+	if lp.circuit == nil {
+		return false
+	}
+
+	powerProbe := lp.chargePower + 1
+	if lp.circuit.ValidatePower(lp.chargePower, powerProbe) < powerProbe {
+		return true
+	}
+
+	currentProbe := lp.actualMaxChargeCurrent() + 1
+	return lp.circuit.ValidateCurrent(lp.actualMaxChargeCurrent(), currentProbe) < currentProbe
+}
+
 // fastCharging scales to 3p if available and sets maximum current
 func (lp *Loadpoint) fastCharging() error {
 	waiting, err := lp.fastChargingPhases()
@@ -2548,18 +2566,33 @@ func (lp *Loadpoint) Update(sitePower, batteryPower float64, consumption, feedin
 			return
 		}
 
-		if dim != nil {
-			if *dim != dimmed {
-				if err := dimmer.Dim(*dim); err != nil {
+		// a saturated circuit also forces dim: an undimmed heatpump may keep drawing
+		// power on its own judgment regardless of the offered max power
+		circuitLimited := lp.circuitAtLimit()
+		want := dim
+		if want == nil && lp.circuit != nil {
+			want = lo.ToPtr(false)
+		}
+		if circuitLimited {
+			want = lo.ToPtr(true)
+		}
+
+		if want != nil {
+			if *want != dimmed {
+				if err := dimmer.Dim(*want); err != nil {
 					lp.log.ERROR.Printf("dim: %v", err)
 					return
 				}
 
-				lp.publish(keys.Dimmed, *dim)
-				lp.log.INFO.Printf("§14a dim: %t", *dim)
+				lp.publish(keys.Dimmed, *want)
+				cause := "§14a"
+				if circuitLimited {
+					cause = "circuit"
+				}
+				lp.log.INFO.Printf("%s dim: %t", cause, *want)
 			}
 
-			if *dim {
+			if *want {
 				return
 			}
 		}
