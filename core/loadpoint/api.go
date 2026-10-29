@@ -203,6 +203,11 @@ type API interface {
 	// SetBatteryBoostLimit sets the battery boost soc limit
 	SetBatteryBoostLimit(int)
 
+	// GetForceDim returns the manual dim override state. nil means the API was never used.
+	GetForceDim() *bool
+	// SetForceDim sets a manual override that forces the charger to dim
+	SetForceDim(enable bool)
+
 	//
 	// smart grid charging
 	//

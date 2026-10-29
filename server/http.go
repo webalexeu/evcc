@@ -186,6 +186,16 @@ func (s *HTTPd) RegisterSiteHandlers(site site.API) {
 		"bufferstartsoc":                  {"POST", "/bufferstartsoc/{value:[0-9.]+}", floatHandler(site.SetBufferStartSoc, site.GetBufferStartSoc)},
 		"batterydischargecontrol":         {"POST", "/batterydischargecontrol/{value:[01truefalse]+}", boolHandler(site.SetBatteryDischargeControl, site.GetBatteryDischargeControl)},
 		"batterygriddischarge":            {"POST", "/batterygriddischarge/{value:[01truefalse]+}", batteryGridDischargeHandler(site)},
+		"batterysolarcontrol":             {"POST", "/batterysolarcontrol/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarControl, site.GetBatterySolarControl)},
+		"batterycalibrationcharge":        {"POST", "/batterycalibrationcharge/{value:[01truefalse]+}", boolHandler(site.SetBatteryCalibrationCharge, site.GetBatteryCalibrationCharge)},
+		"batterycontroldeadband":          {"POST", "/batterycontroldeadband/{value:[0-9.]+}", floatHandler(site.SetBatteryControlDeadBand, site.GetBatteryControlDeadBand)},
+		"batterysolarpool":                {"POST", "/batterysolarpool/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarPool, site.GetBatterySolarPool)},
+		"batterysolartiering":             {"POST", "/batterysolartiering/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarTiering, site.GetBatterySolarTiering)},
+		"batterysolarsticky":              {"POST", "/batterysolarsticky/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarSticky, site.GetBatterySolarSticky)},
+		"batterysolartapering":            {"POST", "/batterysolartapering/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarTapering, site.GetBatterySolarTapering)},
+		"batterysolarchargeallowed":       {"POST", "/batterysolarchargeallowed/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarChargeAllowed, site.GetBatterySolarChargeAllowed)},
+		"batterysolardischargeallowed":    {"POST", "/batterysolardischargeallowed/{value:[01truefalse]+}", boolHandler(site.SetBatterySolarDischargeAllowed, site.GetBatterySolarDischargeAllowed)},
+		"batteryhighloadprotection":       {"POST", "/batteryhighloadprotection/{value:[01truefalse]+}", boolHandler(site.SetBatteryHighLoadProtection, site.GetBatteryHighLoadProtection)},
 		"batterygridcharge":               {"POST", "/batterygridchargelimit/{value:-?[0-9.]+}", floatPtrHandler(site.SetBatteryGridChargeLimit, site.GetBatteryGridChargeLimit)},
 		"batterygridchargedelete":         {"DELETE", "/batterygridchargelimit", floatPtrHandler(site.SetBatteryGridChargeLimit, site.GetBatteryGridChargeLimit)},
 		"batterygriddischargelimit":       {"POST", "/batterygriddischargelimit/{value:-?[0-9.]+}", floatPtrHandler(site.SetBatteryGridDischargeLimit, site.GetBatteryGridDischargeLimit)},
@@ -273,6 +283,7 @@ func (s *HTTPd) RegisterSiteHandlers(site site.API) {
 			"priority":                  {"POST", "/priority/{value:[0-9]+}", intHandler(pass(lp.SetPriority), lp.GetPriority)},
 			"batteryBoost":              {"POST", "/batteryboost/{value:[01truefalse]+}", boolHandler(lp.SetBatteryBoost, func() bool { return lp.GetBatteryBoost() > 0 })},
 			"batteryBoostLimit":         {"POST", "/batteryboostlimit/{value:[0-9]+}", intHandler(pass(lp.SetBatteryBoostLimit), lp.GetBatteryBoostLimit)},
+			"forceDim":                  {"POST", "/forcedim/{value:[01truefalse]+}", boolHandler(pass(lp.SetForceDim), func() bool { forced := lp.GetForceDim(); return forced != nil && *forced })},
 		}
 
 		for _, r := range routes {

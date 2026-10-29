@@ -2,6 +2,8 @@ package core
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -10,8 +12,83 @@ import (
 	"github.com/evcc-io/evcc/core/loadpoint"
 	"github.com/evcc-io/evcc/core/types"
 	"github.com/evcc-io/evcc/hems/hems"
+	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/config"
 )
+
+// batteryLog is the dedicated "battery" log area for solar control and the fast loop,
+// so battery lines can be filtered and level-controlled separately from "site".
+var batteryLog = util.NewLogger("battery")
+
+// chargeTaperRange is the SoC band (percentage points) before maxSoc in which the
+// charge power is linearly tapered down to chargeMinFactor. This mimics the CC/CV
+// profile that protects cells from stress near full charge. Some inverters enforce
+// this internally; the software taper is a safety net when running in RS485 mode.
+const (
+	chargeTaperRange = 5.0  // begin tapering this many % below maxSoc
+	chargeMinFactor  = 0.25 // taper down to 25% of requested power at maxSoc
+	stopRefreshTicks = 10   // re-send stop to an already-stopped battery every N ticks (watchdog heartbeat)
+	// batteryTierFraction sizes the tier count off a fraction of each battery's rated
+	// charge/discharge power rather than the full rating, so load spreads onto more units
+	// earlier (e.g. 2000W onto 2 of 3 at 50%). Spreading covers more phases (single-phase
+	// inverters) and runs each unit at a more efficient partial load; the cost is each extra
+	// inverter's standby draw. The per-battery power cap stays the full rating, so a unit can
+	// still ramp to its limit when others drop out.
+	batteryTierFraction = 0.5
+)
+
+// computeTier returns the number of batteries to activate given the current power target,
+// per-battery rated power, the previously-used tier (for hysteresis), and the number
+// of available batteries.
+//
+// Why tiering?
+// Splitting a small target equally across all batteries often results in per-unit
+// commands below the inverter's minimum effective power (e.g. Marstek ignores <50 W).
+// Tiering uses the minimum number of batteries so each unit stays at or below its
+// rated capacity — which also keeps each inverter at a more efficient operating point.
+//
+// Hysteresis (15% dead band):
+// Without hysteresis the tier would flip on every tick when the target hovers near a
+// boundary. The dead band means we switch up only when the target clearly exceeds the
+// current tier's capacity (×1.15), and switch down only when it clearly falls below
+// the previous tier's capacity (×0.85). Jumps of more than one tier skip the dead band
+// and respond immediately.
+func computeTier(target, maxPerBat float64, currentTier, maxTier int) int {
+	if maxPerBat <= 0 || maxTier <= 1 {
+		return maxTier
+	}
+
+	const hysteresis = 0.15
+
+	// minimum batteries needed so each handles at most maxPerBat
+	raw := int(math.Ceil(target / maxPerBat))
+	if raw < 1 {
+		raw = 1
+	}
+	if raw > maxTier {
+		raw = maxTier
+	}
+
+	// first call: jump directly to the correct tier with no hysteresis
+	if currentTier == 0 {
+		return raw
+	}
+
+	diff := raw - currentTier
+	if diff > 1 || diff < -1 {
+		// large change (>1 tier): respond immediately without waiting for dead band
+		return raw
+	}
+
+	// single-tier transitions: enforce hysteresis dead band
+	if diff == 1 && target > float64(currentTier)*maxPerBat*(1+hysteresis) {
+		return currentTier + 1 // clearly above current tier's capacity
+	}
+	if diff == -1 && target < float64(currentTier-1)*maxPerBat*(1-hysteresis) {
+		return currentTier - 1 // clearly below previous tier's capacity
+	}
+	return currentTier
+}
 
 func batteryModeModified(mode api.BatteryMode) bool {
 	return mode != api.BatteryUnknown && mode != api.BatteryNormal
@@ -44,7 +121,7 @@ func (site *Site) SetBatteryMode(batMode api.BatteryMode) {
 	site.Lock()
 	defer site.Unlock()
 
-	site.log.DEBUG.Println("set battery mode:", batMode)
+	batteryLog.DEBUG.Println("set battery mode:", batMode)
 
 	if site.batteryMode != batMode {
 		site.setBatteryMode(batMode)
@@ -66,13 +143,13 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 
 	// put battery into hold mode when charging is active and HEMS dimmed
 	if dimmed := hems.Dimmed(site.hems); site.fromTo(batteryMode, api.BatteryCharge) && dimmed != nil && *dimmed {
-		site.log.DEBUG.Println("battery mode: HEMS dimmed")
+		batteryLog.DEBUG.Println("battery mode: HEMS dimmed")
 		batteryMode = api.BatteryHold
 	}
 
 	// stop discharging to grid when HEMS curtailed production, but keep self-consumption
 	if curtailed := hems.Curtailed(site.hems); site.fromTo(batteryMode, api.BatteryDischarge) && curtailed != nil && *curtailed {
-		site.log.DEBUG.Println("battery mode: HEMS curtailed")
+		batteryLog.DEBUG.Println("battery mode: HEMS curtailed")
 		batteryMode = api.BatteryNormal
 	}
 
@@ -84,9 +161,165 @@ func (site *Site) updateBatteryMode(batteryGridChargeActive, batteryGridDischarg
 				site.SetBatteryMode(batteryMode)
 			}
 		} else {
-			site.log.ERROR.Println("battery mode:", err)
+			batteryLog.ERROR.Println("battery mode:", err)
 		}
 	}
+
+	// Solar control: refresh the fast loop's snapshot (SoC/limits/caps + config). The fast
+	// loop owns all power decisions off fresh grid/battery readings. When solar control is
+	// off - or when a higher-precedence mode overrides it (grid charge, external/API control) -
+	// clear the snapshot so the fast loop parks and the mode-based control owns the battery.
+	extMode := site.GetBatteryModeExternal()
+	site.Lock()
+	extModeReset := extMode == api.BatteryUnknown && !site.batteryModeExternalTimer.IsZero()
+	site.Unlock()
+	overridden := batteryGridChargeActive || extMode != api.BatteryUnknown || extModeReset
+	if site.batterySolarControl && !overridden {
+		site.buildBatterySnapshot(rate)
+	} else {
+		site.batteryPlanMu.Lock()
+		// Switching solar control fully off: the last active battery still holds the setpoint
+		// the fast loop commanded (Normal mode only flips the mode register, not the power
+		// register), so stop every battery once before parking. Under batteryPlanMu the fast
+		// tick can't run concurrently, so the fast loop stays the sole power writer. When a
+		// higher-precedence controller takes over instead (grid charge, external) it re-commands
+		// power every tick, so leave the setpoint to it rather than fighting with a stop.
+		if snap := site.batterySnapshot; snap != nil && !overridden {
+			if site.batteryStopped == nil {
+				site.batteryStopped = make(map[string]int)
+			}
+			site.stopBatteries(fastEntriesAll(snap))
+			site.batteryChargeActive, site.batteryDischargeActive = nil, nil
+			site.batteryChargeTier, site.batteryDischargeTier = 0, 0
+			site.batteryFastDirection = batteryPlanIdle
+		}
+		site.batterySnapshot = nil
+		site.batteryPlanMu.Unlock()
+	}
+}
+
+// buildBatterySnapshot reads the slow-moving per-battery state (SoC, limits, power caps) and
+// the current config, then publishes a snapshot for the fast loop under batteryPlanMu. It
+// commands no power and chooses no direction - those are the fast loop's job.
+func (site *Site) buildBatterySnapshot(rate api.Rate) {
+	// loadpointPower covers both EV chargers and heating loadpoints (heat pumps) - either
+	// can draw real power the battery shouldn't unconditionally absorb, and both already
+	// expose the same generic status/mode/plan accessors used below.
+	var loadpointPower, loadpointPowerFast, boostPower float64
+	for _, lp := range site.loadpoints {
+		p := lp.GetChargePower()
+
+		// active battery boost: the user explicitly wants the battery drained into
+		// this loadpoint (down to the boost soc limit), so the fast loop covers it even
+		// below bufferSoc / with discharge control. It is therefore NOT part of the
+		// excluded power. boostHold (limit reached) stops pushing, so treat it as off.
+		if b := lp.GetBatteryBoost(); b != boostDisabled && b != boostHold {
+			boostPower += p
+			continue
+		}
+
+		loadpointPower += p
+		if lp.GetStatus() != api.StatusA && lp.IsFastChargingActive() {
+			loadpointPowerFast += p
+		}
+	}
+
+	// auto-disable calibration charge once aggregate SoC reaches 100 %
+	if site.batteryCalibrationCharge && site.battery.Soc >= 100 {
+		site.Lock()
+		site.batteryCalibrationCharge = false
+		site.Unlock()
+		site.publish(keys.BatteryCalibrationCharge, false)
+		batteryLog.DEBUG.Printf("battery calibration charge complete (soc %.0f%%)", site.battery.Soc)
+	}
+
+	// charge ignores residualPower below prioritySoc (the energy-balance surplus already
+	// does); discharge excludes fast/planned loadpoint power (or all of it below bufferSoc)
+	residual := site.GetResidualPower()
+	chargeOffset := 0.0
+	if site.battery.Soc >= site.prioritySoc {
+		chargeOffset = residual
+	}
+	// boosting loadpoints are already excluded from loadpointPower/loadpointPowerFast above,
+	// so the battery covers them; the boost soc floor is enforced loadpoint-side (boostHold,
+	// #31922) and the fast loop's own minSoc fail-closed remains the hard floor.
+	var dischargeExcluded float64
+	if site.dischargeControlActive(rate) {
+		dischargeExcluded = loadpointPowerFast
+	} else if !(site.bufferSoc > 0 && site.battery.Soc > site.bufferSoc) {
+		dischargeExcluded = loadpointPower
+	}
+
+	snap := &batterySnapshot{
+		enabled:           true,
+		pool:              site.batterySolarPool,
+		tiering:           site.batterySolarTiering,
+		sticky:            site.batterySolarSticky,
+		tapering:          site.batterySolarTapering,
+		chargeAllowed:     site.batterySolarChargeAllowed,
+		dischargeAllowed:  site.batterySolarDischargeAllowed || site.batteryHighLoadProtectionActive(),
+		calibration:       site.batteryCalibrationCharge,
+		chargeOffset:      chargeOffset,
+		dischargeOffset:   residual,
+		dischargeExcluded: dischargeExcluded,
+		threshold:         standbyPower + site.batteryControlDeadBand,
+		created:           time.Now(),
+	}
+
+	for _, dev := range site.batteryMeters {
+		ctrl, ok := api.Cap[api.BatteryPowerController](dev.Instance())
+		if !ok {
+			continue
+		}
+		e := batterySnapEntry{ctrl: ctrl, meter: dev.Instance(), name: dev.Config().Name}
+		if bat, ok := api.Cap[api.Battery](dev.Instance()); ok {
+			if soc, err := bat.Soc(); err == nil {
+				e.soc, e.socOK = soc, true
+			}
+		}
+		if limiter, ok := api.Cap[api.BatterySocLimiter](dev.Instance()); ok {
+			if minSoc, maxSoc, err := limiter.GetSocLimits(); err == nil {
+				e.hasSocLimit = true
+				e.minSoc, e.maxSoc = minSoc, maxSoc
+			} else {
+				batteryLog.ERROR.Printf("battery %s soc limits: %v", dev.Config().Name, err)
+			}
+		}
+		if limiter, ok := api.Cap[api.BatteryPowerLimiter](dev.Instance()); ok {
+			if chargeCap, dischargeCap, err := limiter.GetPowerLimits(); err == nil {
+				e.chargeCap, e.dischargeCap = chargeCap, dischargeCap
+			} else {
+				batteryLog.ERROR.Printf("battery %s power limits: %v", dev.Config().Name, err)
+			}
+		}
+		snap.batteries = append(snap.batteries, e)
+	}
+
+	site.batteryPlanMu.Lock()
+	site.batterySnapshot = snap
+	site.batteryPlanMu.Unlock()
+
+	batteryLog.TRACE.Printf("battery snapshot: %d batteries soc=%.0f%% chargeOff=%.0fW dischargeOff=%.0fW excl=%.0fW boost=%.0fW threshold=%.0fW",
+		len(snap.batteries), site.battery.Soc, chargeOffset, residual, dischargeExcluded, boostPower, snap.threshold)
+}
+
+// batteryHighLoadProtectionActive reports whether the battery should be allowed to discharge
+// to relieve the site's root circuit, overriding batterySolarDischargeAllowed when it is off.
+// It piggybacks on the existing load-management circuit (the one the user already sized to
+// their main fuse) rather than introducing a second, separate limit: true once the circuit's
+// worst measured phase current is at or above its configured max current.
+//
+// This is intentionally the same "worst of three phases vs. one limit" model core/circuit
+// already uses (see Circuit.updateMeters), not a genuinely per-phase one, and a global rather
+// than a per-battery check: a single-phase battery only actually relieves the overloaded phase
+// when it happens to be wired to it, which isn't tracked anywhere today. A future per-phase
+// version would need each battery's wired phase before this check could target it specifically.
+func (site *Site) batteryHighLoadProtectionActive() bool {
+	if !site.batteryHighLoadProtection || site.circuit == nil || !site.circuit.HasMeter() {
+		return false
+	}
+	maxCurrent := site.circuit.GetMaxCurrent()
+	return maxCurrent > 0 && site.circuit.GetMaxPhaseCurrent() >= maxCurrent
 }
 
 // requiredBatteryMode determines required battery mode based on grid charge/discharge and rate
@@ -132,12 +365,18 @@ func (site *Site) requiredBatteryMode(batteryGridChargeActive, batteryGridDischa
 		// independent limits (buy vs feed-in rate) can both be active at once;
 		// charge wins to avoid buying and immediately selling
 		if batteryGridDischargeActive && batMode != api.BatteryCharge {
-			site.log.WARN.Println("battery mode: grid charge and grid discharge both active, charge takes priority")
+			batteryLog.WARN.Println("battery mode: grid charge and grid discharge both active, charge takes priority")
 		}
 		res = keepUnlessModified(api.BatteryCharge)
 	case site.dischargeControlActive(rate) || (batteryGridDischargeActive && site.evFastChargingActive()):
 		// hold wins over feed-in discharge; fast charging holds even without
 		// batteryDischargeControl, selling while an EV fast-charges is worse
+		res = keepUnlessModified(api.BatteryHold)
+	case site.batterySolarControl:
+		// fork solar control: keep RS485 enabled (Hold) so the fast loop owns power every
+		// tick. Normal mode would disable RS485 between ticks and hand control back to the
+		// inverter. Takes precedence over the upstream grid-discharge mode, an incompatible
+		// whole-battery "sell" mode.
 		res = keepUnlessModified(api.BatteryHold)
 	case batteryGridDischargeActive:
 		res = keepUnlessModified(api.BatteryDischarge)
@@ -197,9 +436,14 @@ func (site *Site) batterySuggestionMode() (api.BatteryMode, bool) {
 // batterySocLimitReached reports whether the battery has reached the soc bound
 // that should stop the requested mode: the max soc when charging, or the min
 // soc reserve when discharging to grid. A configured limit of 0 disables the
-// respective check (max is also disabled at 100). Soc and limits come from the
-// cycle's measurement so the device is not read again.
+// respective check (max is also disabled at 100).
 func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], m types.Measurement, discharge bool) (bool, error) {
+	// Calibration charge bypasses the maxSoc limit so the battery charges to 100 %;
+	// the min-soc reserve on discharge is never bypassed.
+	if !discharge && site.batteryCalibrationCharge {
+		return false, nil
+	}
+
 	if _, ok := api.Cap[api.BatterySocLimiter](dev.Instance()); !ok {
 		return false, nil
 	}
@@ -212,14 +456,14 @@ func (site *Site) batterySocLimitReached(dev config.Device[api.Meter], m types.M
 
 	if discharge {
 		if minSoc > 0 && soc <= minSoc {
-			site.log.DEBUG.Printf("battery %s: reserve soc reached (%.0f <= %.0f)", deviceTitleOrName(dev), soc, minSoc)
+			batteryLog.DEBUG.Printf("battery %s: reserve soc reached (%.0f <= %.0f)", deviceTitleOrName(dev), soc, minSoc)
 			return true, nil
 		}
 		return false, nil
 	}
 
 	if maxSoc > 0 && maxSoc < 100 && soc >= maxSoc {
-		site.log.DEBUG.Printf("battery %s: limit soc reached (%.0f >= %.0f)", deviceTitleOrName(dev), soc, maxSoc)
+		batteryLog.DEBUG.Printf("battery %s: limit soc reached (%.0f >= %.0f)", deviceTitleOrName(dev), soc, maxSoc)
 		return true, nil
 	}
 
@@ -260,6 +504,8 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 
 	devices := site.state().battery.Devices
 
+	var errs error
+
 	for i, dev := range site.batteryMeters {
 		meter := dev.Instance()
 
@@ -280,7 +526,9 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 
 			hold, err := site.batterySocLimitReached(dev, m, fromToDischarge)
 			if err != nil && !errors.Is(err, api.ErrNotAvailable) {
-				return err
+				// don't let one device's error skip the mode update for the others
+				errs = errors.Join(errs, fmt.Errorf("%s: %w", deviceTitleOrName(dev), err))
+				continue
 			}
 			if hold {
 				deviceMode = api.BatteryHold
@@ -294,6 +542,7 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 		// an unsupported mode falls back to the closest supported one instead of leaving the battery in the mode applied before
 		applyMode := supportedBatteryMode(batCtrl.BatteryModes(), deviceMode)
 		if applyMode == api.BatteryUnknown {
+			batteryLog.DEBUG.Printf("battery %s does not support mode: %s", deviceTitleOrName(dev), deviceMode)
 			continue
 		}
 
@@ -310,16 +559,17 @@ func (site *Site) applyBatteryMode(mode api.BatteryMode) error {
 
 		if err := batCtrl.SetBatteryMode(deviceMode); err != nil {
 			if !errors.Is(err, api.ErrNotAvailable) {
-				return err
+				// don't let one device's error skip the mode update for the others
+				errs = errors.Join(errs, fmt.Errorf("%s: %w", deviceTitleOrName(dev), err))
 			}
 			continue
 		}
 
 		site.batteryModeApplied[name] = deviceMode
-		site.log.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), deviceMode)
+		batteryLog.DEBUG.Printf("set battery %s mode: %s", deviceTitleOrName(dev), deviceMode)
 	}
 
-	return nil
+	return errs
 }
 
 func (site *Site) tariffRates(usage api.TariffUsage) (api.Rates, error) {
@@ -363,8 +613,13 @@ func (site *Site) dischargeControlActive(rate api.Rate) bool {
 	}
 
 	for _, lp := range site.activeLoadpoints() {
-		smartCostActive := site.smartCostActive(lp, rate)
-		if lp.GetStatus() == api.StatusC && (smartCostActive || lp.IsFastChargingActive()) {
+		// fast/plan charging: car must be connected (StatusB+) but StatusC not required
+		// so phase negotiation / ramp-up transitions don't momentarily re-enable discharge
+		if lp.GetStatus() != api.StatusA && lp.IsFastChargingActive() {
+			return true
+		}
+		// smart cost: only prevent discharge when current is actually flowing
+		if lp.GetStatus() == api.StatusC && site.smartCostActive(lp, rate) {
 			return true
 		}
 	}

@@ -116,6 +116,36 @@ type API interface {
 	GetBatteryGridDischarge() bool
 	SetBatteryGridDischarge(bool) error
 
+	GetBatterySolarControl() bool
+	SetBatterySolarControl(bool) error
+
+	GetBatteryCalibrationCharge() bool
+	SetBatteryCalibrationCharge(bool) error
+
+	GetBatteryControlDeadBand() float64
+	SetBatteryControlDeadBand(float64) error
+
+	GetBatterySolarPool() bool
+	SetBatterySolarPool(bool) error
+
+	GetBatterySolarTiering() bool
+	SetBatterySolarTiering(bool) error
+
+	GetBatterySolarSticky() bool
+	SetBatterySolarSticky(bool) error
+
+	GetBatterySolarTapering() bool
+	SetBatterySolarTapering(bool) error
+
+	GetBatterySolarChargeAllowed() bool
+	SetBatterySolarChargeAllowed(bool) error
+
+	GetBatterySolarDischargeAllowed() bool
+	SetBatterySolarDischargeAllowed(bool) error
+
+	GetBatteryHighLoadProtection() bool
+	SetBatteryHighLoadProtection(bool) error
+
 	//
 	// battery control external
 	//
