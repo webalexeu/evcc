@@ -83,10 +83,24 @@
     }
   },
   "batterySettings": {
+    "batteryControl": "Contrôler activement la puissance de charge et de décharge selon la production solaire et la consommation.",
+    "batteryControlModePerBattery": "Sélection intelligente",
+    "batteryControlModePerBatteryDesc": "Sélectionner les batteries actives selon leur état de charge et leur puissance nominale.",
+    "batteryControlModePool": "Distribution uniforme",
+    "batteryControlModePoolDesc": "Répartir la puissance équitablement entre toutes les batteries. Idéal pour les systèmes à équilibrage matériel.",
+    "batteryControlModeTab": "Mode de gestion",
+    "batteryControlTab": "Contrôle batterie",
+    "calibrationLabel": "Charger à 100% — contourne le SoC maximum configuré pour une session. Se désactive automatiquement à 100%.",
+    "calibrationTab": "Calibration LFP",
+    "chargeAllowedLabel": "Autoriser la charge de la batterie depuis le surplus solaire.",
+    "directionTab": "Charge / décharge",
+    "dischargeAllowedLabel": "Autoriser la décharge de la batterie pour couvrir la consommation.",
     "gridChargeTab": "Chargement réseau",
     "gridDischargeTab": "Décharge vers le réseau",
     "modalTitle": "Batterie domestique",
     "noBattery": "Aucune batterie n'est configurée.",
+    "taperingLabel": "Réduire la puissance de charge en fin de charge (avant le SoC maximum) pour protéger la batterie.",
+    "taperingTab": "Réduction de charge en fin",
     "usageTab": "Utilisation batterie"
   },
   "colors": {

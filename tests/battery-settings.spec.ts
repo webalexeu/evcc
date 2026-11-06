@@ -135,6 +135,28 @@ test.describe("battery settings", async () => {
     await expect(optimizerHints).toHaveCount(0);
   });
 
+  test("charge/discharge direction toggles", async ({ page }) => {
+    await page.goto("/#/battery");
+
+    await page.getByLabel("Actively control charge and discharge").check();
+
+    const chargeAllowed = page.getByLabel("Allow battery charge from solar surplus.");
+    const dischargeAllowed = page.getByLabel("Allow battery discharge to cover load.");
+
+    await expect(chargeAllowed).toBeChecked();
+    await expect(dischargeAllowed).toBeChecked();
+
+    await chargeAllowed.uncheck();
+    await dischargeAllowed.uncheck();
+    await expect(chargeAllowed).not.toBeChecked();
+    await expect(dischargeAllowed).not.toBeChecked();
+
+    // persisted
+    await page.reload();
+    await expect(chargeAllowed).not.toBeChecked();
+    await expect(dischargeAllowed).not.toBeChecked();
+  });
+
   test("hold mode display", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("energyflow").click();
