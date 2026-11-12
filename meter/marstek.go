@@ -183,7 +183,7 @@ var _ api.BatteryController = (*Marstek)(nil)
 
 // BatteryModes implements the api.BatteryController interface
 func (m *Marstek) BatteryModes() []api.BatteryMode {
-	return []api.BatteryMode{api.BatteryNormal, api.BatteryHold, api.BatteryCharge, api.BatteryHoldCharge}
+	return []api.BatteryMode{api.BatteryNormal, api.BatteryHoldDischarge, api.BatteryCharge, api.BatteryHoldCharge}
 }
 
 // SetBatteryMode implements the api.BatteryController interface.
@@ -201,7 +201,7 @@ func (m *Marstek) SetBatteryMode(mode api.BatteryMode) error {
 			reg{marstekRegRS485, marstekRS485Off},
 		)
 
-	case api.BatteryHold:
+	case api.BatteryHoldDischarge:
 		return m.write(
 			reg{marstekRegRS485, marstekRS485On},
 			reg{marstekRegForce, marstekForceStop},
