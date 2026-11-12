@@ -239,10 +239,10 @@ func TestApplyBatteryModeContinuesAfterDeviceError(t *testing.T) {
 		batteryMode: api.BatteryNormal,
 	}
 
-	batConFailing.EXPECT().SetBatteryMode(api.BatteryHold).Return(errors.New("modbus timeout"))
-	batConOk.EXPECT().SetBatteryMode(api.BatteryHold).Times(1)
+	batConFailing.EXPECT().SetBatteryMode(api.BatteryHoldDischarge).Return(errors.New("modbus timeout"))
+	batConOk.EXPECT().SetBatteryMode(api.BatteryHoldDischarge).Times(1)
 
-	err := site.applyBatteryMode(api.BatteryHold)
+	err := site.applyBatteryMode(api.BatteryHoldDischarge)
 	assert.Error(t, err)
 
 	ctrl.Finish()
