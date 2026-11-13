@@ -35,7 +35,6 @@
 				</template>
 			</i18n-t>
 		</p>
-		<p class="text-muted small">{{ $t("config.remote.installDesktop") }}</p>
 		<FormRow id="revealUsername" :label="$t('config.remote.username')">
 			<input
 				id="revealUsername"
