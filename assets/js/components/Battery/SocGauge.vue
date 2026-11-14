@@ -40,11 +40,11 @@
 				:class="{ 'layer--active': isCharging || isDischarging }"
 				:style="{ '--rotate': arrowRotate }"
 			/>
-			<BatteryHoldDischarge
-				:size="ICON_SIZE.M"
-				class="layer"
-				:class="{ 'layer--active': mode === BATTERY_MODE.HOLDDISCHARGE }"
-			/>
+<!-- FORK (feat/battery_loop): upstream's BatteryHoldDischarge layer removed - under
+			     watt-level control HOLDDISCHARGE is active, not paused, so the arrow/dot icons
+			     drive it. Restore the BatteryHoldDischarge layer (active on
+			     BATTERY_MODE.HOLDDISCHARGE) to follow upstream. -->
+
 			<BatteryHoldCharge
 				:size="ICON_SIZE.M"
 				class="layer"
@@ -59,7 +59,6 @@
 import { defineComponent, type PropType } from "vue";
 import { BATTERY_MODE, ICON_SIZE } from "@/types/evcc";
 import ArrowDown from "../MaterialIcon/ArrowDown.vue";
-import BatteryHoldDischarge from "../MaterialIcon/BatteryHoldDischarge.vue";
 import BatteryHoldCharge from "../MaterialIcon/BatteryHoldCharge.vue";
 import BatteryCharge from "../MaterialIcon/BatteryCharge.vue";
 import BatteryDischarge from "../MaterialIcon/BatteryDischarge.vue";
@@ -72,8 +71,11 @@ const C = SIZE / 2;
 const R = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * R;
 
+// FORK (feat/battery_loop): BATTERY_MODE.HOLDDISCHARGE intentionally omitted — see
+// BatteryStatusCard.statusState. Watt-level solar control drives charge/discharge while the
+// mode stays HOLDDISCHARGE, so the gauge should show real power, not a lock. Restore
+// HOLDDISCHARGE to follow upstream.
 const LOCKED_MODES: BATTERY_MODE[] = [
-	BATTERY_MODE.HOLDDISCHARGE,
 	BATTERY_MODE.HOLDCHARGE,
 	BATTERY_MODE.CHARGE,
 	BATTERY_MODE.DISCHARGE,
@@ -83,14 +85,7 @@ const LOCKED_MODES: BATTERY_MODE[] = [
 // tweens instead of hard-swapping
 export default defineComponent({
 	name: "SocGauge",
-	components: {
-		ArrowDown,
-		BatteryHoldDischarge,
-		BatteryHoldCharge,
-		BatteryCharge,
-		BatteryDischarge,
-		Dot,
-	},
+	components: { ArrowDown, BatteryCharge, BatteryDischarge, BatteryHoldCharge, Dot },
 	props: {
 		soc: { type: Number, default: 0 },
 		color: { type: String, default: "" },
