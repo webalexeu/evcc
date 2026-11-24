@@ -33,6 +33,152 @@
 					/>
 
 					<Card
+						v-if="solarControlPossible"
+						class="mb-4 box-pull-out"
+						:title="$t('batterySettings.batteryControlTab')"
+					>
+						<div class="form-check form-switch mb-3">
+							<input
+								id="batteryExpSolarControl"
+								:checked="state.batterySolarControl"
+								class="form-check-input"
+								type="checkbox"
+								role="switch"
+								@change="changeSolarControl"
+							/>
+							<label class="form-check-label" for="batteryExpSolarControl">
+								{{ $t("batterySettings.batteryControl") }}
+							</label>
+						</div>
+						<template v-if="state.batterySolarControl">
+							<div class="mb-1 small text-muted fw-semibold text-uppercase">
+								{{ $t("batterySettings.batteryControlModeTab") }}
+							</div>
+							<div class="d-flex gap-4 mb-3">
+								<div class="form-check">
+									<input
+										id="batteryExpSolarModePerBattery"
+										:checked="!state.batterySolarPool"
+										class="form-check-input"
+										type="radio"
+										name="batteryExpSolarMode"
+										@change="changePool(false)"
+									/>
+									<label
+										class="form-check-label"
+										for="batteryExpSolarModePerBattery"
+									>
+										{{ $t("batterySettings.batteryControlModePerBattery") }}
+									</label>
+								</div>
+								<div class="form-check">
+									<input
+										id="batteryExpSolarModePool"
+										:checked="state.batterySolarPool"
+										class="form-check-input"
+										type="radio"
+										name="batteryExpSolarMode"
+										@change="changePool(true)"
+									/>
+									<label class="form-check-label" for="batteryExpSolarModePool">
+										{{ $t("batterySettings.batteryControlModePool") }}
+									</label>
+								</div>
+							</div>
+							<p class="text-muted small mb-3">
+								{{
+									state.batterySolarPool
+										? $t("batterySettings.batteryControlModePoolDesc")
+										: $t("batterySettings.batteryControlModePerBatteryDesc")
+								}}
+							</p>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.taperingTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarTapering"
+									:checked="state.batterySolarTapering"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeTapering"
+								/>
+								<label class="form-check-label" for="batteryExpSolarTapering">
+									{{ $t("batterySettings.taperingLabel") }}
+								</label>
+							</div>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.directionTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarChargeAllowed"
+									:checked="state.batterySolarChargeAllowed"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeChargeAllowed"
+								/>
+								<label class="form-check-label" for="batteryExpSolarChargeAllowed">
+									{{ $t("batterySettings.chargeAllowedLabel") }}
+								</label>
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpSolarDischargeAllowed"
+									:checked="state.batterySolarDischargeAllowed"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeDischargeAllowed"
+								/>
+								<label
+									class="form-check-label"
+									for="batteryExpSolarDischargeAllowed"
+								>
+									{{ $t("batterySettings.dischargeAllowedLabel") }}
+								</label>
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpHighLoadProtection"
+									:checked="state.batteryHighLoadProtection"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeHighLoadProtection"
+								/>
+								<label class="form-check-label" for="batteryExpHighLoadProtection">
+									{{ $t("batterySettings.highLoadProtectionLabel") }}
+								</label>
+							</div>
+							<p class="text-muted mt-1">
+								{{ $t("batterySettings.highLoadProtectionDesc") }}
+							</p>
+							<hr class="my-3" />
+							<div class="fw-bold mb-2">
+								{{ $t("batterySettings.calibrationTab") }}
+							</div>
+							<div class="form-check form-switch">
+								<input
+									id="batteryExpCalibrationCharge"
+									:checked="state.batteryCalibrationCharge"
+									class="form-check-input"
+									type="checkbox"
+									role="switch"
+									@change="changeCalibrationCharge"
+								/>
+								<label class="form-check-label" for="batteryExpCalibrationCharge">
+									{{ $t("batterySettings.calibrationLabel") }}
+								</label>
+							</div>
+						</template>
+					</Card>
+
+					<Card
 						v-if="gridChargeVisible"
 						class="box-pull-out"
 						:title="$t('batterySettings.gridChargeTab')"
@@ -147,6 +293,12 @@ export default defineComponent({
 				forecastToSeries(this.evopt, this.now.getTime())
 			);
 		},
+		batteryControllable(): boolean {
+			return this.devices.some(({ controllable }) => controllable);
+		},
+		solarControlPossible(): boolean {
+			return this.batteryControllable;
+		},
 		gridChargePossible(): boolean {
 			return this.supportsMode(BATTERY_MODE.CHARGE) && !!this.state.smartCostAvailable;
 		},
@@ -219,6 +371,67 @@ export default defineComponent({
 		},
 		onRangeStart(start: Date) {
 			this.rangeStart = start;
+		},
+		async changeSolarControl(e: Event) {
+			try {
+				await api.post(
+					`batterysolarcontrol/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeCalibrationCharge(e: Event) {
+			try {
+				await api.post(
+					`batterycalibrationcharge/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changePool(value: boolean) {
+			try {
+				await api.post(`batterysolarpool/${value ? "true" : "false"}`);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeTapering(e: Event) {
+			try {
+				await api.post(
+					`batterysolartapering/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeChargeAllowed(e: Event) {
+			try {
+				await api.post(
+					`batterysolarchargeallowed/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeDischargeAllowed(e: Event) {
+			try {
+				await api.post(
+					`batterysolardischargeallowed/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
+		},
+		async changeHighLoadProtection(e: Event) {
+			try {
+				await api.post(
+					`batteryhighloadprotection/${(e.target as HTMLInputElement).checked ? "true" : "false"}`
+				);
+			} catch (err) {
+				console.error(err);
+			}
 		},
 		async fetchHistory() {
 			if (this.loading || !this.batteryAvailable) return;
